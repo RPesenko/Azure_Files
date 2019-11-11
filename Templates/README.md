@@ -1,0 +1,2 @@
+# Templates for Azure resources 
+

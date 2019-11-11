@@ -1,0 +1,151 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "workflows_ODA_WeeklyMail_name": {
+            "defaultValue": "SQLAssessment_WeeklyMail",
+            "type": "String"
+        },
+        "integrationAccounts_OMS_LogicApp_IntAcct_externalid": {
+            "defaultValue": "/subscriptions/c34479e8-d241-49ec-86de-1c3edc25fa81/resourceGroups/RG_OMS_Test/providers/Microsoft.Logic/integrationAccounts/OMS_LogicApp_IntAcct",
+            "type": "String"
+        },
+        "connections_azureloganalytics_1_externalid": {
+            "defaultValue": "/subscriptions/c34479e8-d241-49ec-86de-1c3edc25fa81/resourceGroups/RG_OMS_Test/providers/Microsoft.Web/connections/azureloganalytics-1",
+            "type": "String"
+        },
+        "connections_office365_externalid": {
+            "defaultValue": "/subscriptions/c34479e8-d241-49ec-86de-1c3edc25fa81/resourceGroups/RG_OMS_Test/providers/Microsoft.Web/connections/office365",
+            "type": "String"
+        }
+    },
+    "variables": {},
+    "resources": [
+        {
+            "type": "Microsoft.Logic/workflows",
+            "apiVersion": "2017-07-01",
+            "name": "[parameters('workflows_ODA_WeeklyMail_name')]",
+            "location": "westcentralus",
+            "properties": {
+                "state": "Enabled",
+                "integrationAccount": {
+                    "id": "[parameters('integrationAccounts_OMS_LogicApp_IntAcct_externalid')]"
+                },
+                "definition": {
+                    "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+                    "contentVersion": "1.0.0.0",
+                    "parameters": {
+                        "$connections": {
+                            "defaultValue": {},
+                            "type": "Object"
+                        }
+                    },
+                    "triggers": {
+                        "Trigger_on_Weekly_Schedule": {
+                            "recurrence": {
+                                "frequency": "Week",
+                                "interval": 1
+                            },
+                            "type": "Recurrence"
+                        }
+                    },
+                    "actions": {
+                        "Add_CSS_Header": {
+                            "runAfter": {
+                                "Create_HTML_table": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "InitializeVariable",
+                            "inputs": {
+                                "variables": [
+                                    {
+                                        "name": "BodyHeader",
+                                        "type": "String",
+                                        "value": "<style>\nTABLE{border-width: 1px;border-style: solid;border-color: black;border-collapse: collapse; width: 80%;}\nTH{border-width: 1px;border-style: solid;border-color: black;background-color:#5070C8;color:white;padding: 5px; font-weight: bold;text-align:left;}\nTD{border-width: 1px;border-style: solid;border-color: black;background-color:#F8F8F8; padding: 5px;text-align:left}\n</style>\n<H1>On Demand Assessment Recommendations</H1>"
+                                    }
+                                ]
+                            }
+                        },
+                        "Create_HTML_table": {
+                            "runAfter": {
+                                "Run_query_and_list_results": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "Table",
+                            "inputs": {
+                                "format": "HTML",
+                                "from": "@body('Run_query_and_list_results')?['value']"
+                            }
+                        },
+                        "Run_query_and_list_results": {
+                            "runAfter": {},
+                            "type": "ApiConnection",
+                            "inputs": {
+                                "body": "SQLAssessmentRecommendation\n| where TimeGenerated > ago(7d) \n| where RecommendationResult == \"Failed\" \n| where RecommendationScore > 10 \n| project Score = RecommendationScore, Recommendation, AffectedObjectName  \n| sort by Score desc ",
+                                "host": {
+                                    "connection": {
+                                        "name": "@parameters('$connections')['azureloganalytics']['connectionId']"
+                                    }
+                                },
+                                "method": "post",
+                                "path": "/queryOms",
+                                "queries": {
+                                    "resourcegroups": "RG_OMS_Test",
+                                    "subscriptions": "c34479e8-d241-49ec-86de-1c3edc25fa81",
+                                    "workspaces": "OMS-PMC-Test"
+                                }
+                            }
+                        },
+                        "Send_an_email": {
+                            "runAfter": {
+                                "Add_CSS_Header": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "ApiConnection",
+                            "inputs": {
+                                "body": {
+                                    "Attachments": [
+                                        {
+                                            "ContentBytes": "@{base64(concat(variables('BodyHeader'),body('Create_HTML_table')))}",
+                                            "Name": "Results@{utcNow('yyyyMMdd')}.html"
+                                        }
+                                    ],
+                                    "Body": "Test  ",
+                                    "Subject": "SQL Assessment weekly results:  @{utcNow('D')}",
+                                    "To": "recipient@contoso.com"
+                                },
+                                "host": {
+                                    "connection": {
+                                        "name": "@parameters('$connections')['office365']['connectionId']"
+                                    }
+                                },
+                                "method": "post",
+                                "path": "/Mail"
+                            }
+                        }
+                    },
+                    "outputs": {}
+                },
+                "parameters": {
+                    "$connections": {
+                        "value": {
+                            "azureloganalytics": {
+                                "connectionId": "[parameters('connections_azureloganalytics_1_externalid')]",
+                                "connectionName": "azureloganalytics-1",
+                                "id": "/subscriptions/c34479e8-d241-49ec-86de-1c3edc25fa81/providers/Microsoft.Web/locations/westcentralus/managedApis/azureloganalytics"
+                            },
+                            "office365": {
+                                "connectionId": "[parameters('connections_office365_externalid')]",
+                                "connectionName": "office365",
+                                "id": "/subscriptions/c34479e8-d241-49ec-86de-1c3edc25fa81/providers/Microsoft.Web/locations/westcentralus/managedApis/office365"
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    ]
+}
