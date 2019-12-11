@@ -18,3 +18,5 @@ Things to note:
 * The Logs query can be modified in the template, or after the Logic App has been deployed
 * The On Demand Assessment should be enabled in the Log Analytic workspace in advance, so there is data to query
 * The mail recipient defaults to "User@contoso.com" and should be changed to a real user or test mailbox/DL
+
+
