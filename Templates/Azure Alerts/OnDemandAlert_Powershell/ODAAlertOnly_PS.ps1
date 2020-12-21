@@ -1,15 +1,18 @@
 <# Script: ODAAlertOnly_PS
    Purpose: Create Azure Alert if ODA assessment has not run in over a week
-   Version: 1.0 
+   Version: 1.1 
    Author: RPesenko@microsoft.com
-   TODO: Parameterize variables; Add error handling
 #>
 
-# Required Variables ------>
-$RGName = "RG-ODA_Test"      # Resource Group of workspace and where alert will be created
-$WKSPName = "ODATest2"       # Name of workspace to query for ODA results
-$ODAType = "AD"          # Technology type of ODA.  Will be prepended to rest of query.
-# ------------------------->
+Param (
+    [Parameter(Mandatory)]
+    [string] $RGName,    # Resource Group of workspace and where alert will be created
+    [Parameter(Mandatory)]
+    [string] $WKSPName,  # Name of workspace to query for ODA results
+    [Parameter(Mandatory)]
+    [ValidateSet('AD','ADS','Azure','Exchange','ExchangeOnline','SQL','SCOM','SCCM','SP','SPO','SfB','WindowsClient','WindowsServer')]
+    [string] $ODAType    # Technology type of ODA.  Will be prepended to rest of query.
+)
 
 $la_workspace = Get-AzOperationalInsightsWorkspace -ResourceGroupName $RGName -Name $WKSPName
 

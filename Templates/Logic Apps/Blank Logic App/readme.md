@@ -1,4 +1,4 @@
-# Creating a blank Logic App with recurrance trigger
+# Creating a blank Logic App with recurrence trigger
 This template allows you to create a new logic app with a trigger to run on a recurring schedule.  
 
 ## Deploy template with Powershell
@@ -6,11 +6,14 @@ This template allows you to create a new logic app with a trigger to run on a re
 From PowerShell, type the following to establish a connection to your subscription.
 > Connect-AzAccount
 
-##### Create a Resource Group for your Logic App
+##### Create or specify a Resource Group for your Logic App
 From PowerShell, type the following to create a new Resource Group (if required) in one of the Azure Regions
 > New-AzResourceGroup -Name RG_LogicAppTest -Location "Central US"
 
-#### Create a deployment of the template
+If you would like to deploy the Logic App to an existing Resource Group, use the following syntax
+> Get-AzResourceGroup -Name MyResourceGroup
+
+#### Create a deployment of the template (Not using parameter file) 
 Type the following in your PowerShell session
 >   New-AzResourceGroupDeployment 
   -Name FirstDeployment 
@@ -20,16 +23,17 @@ Type the following in your PowerShell session
   -AppInterval 1 
   -AppFrequency "Day"
 
-  The _New-AzResourcGroupDeployment_ cmdlet uses the following parameters
+  The _New-AzResourceGroupDeployment_ cmdlet uses the following parameters
   - Name: This is the name of the deployment task.  
   - TemplateFile: Populate the _$templateFile_ variable with the path to your template.
   - Appname: This is the name of the Logic App to be deployed.
-  - AppInterval: Integer value for recurrance
-  - AppFrequency:  String value for recurrance (EX: Month, Day, Minute,etc)
+  - AppInterval: Integer value for recurrence
+  - AppFrequency:  String value for recurrence (EX: Month, Day, Minute,etc)
 
 If the _AppInterval_ and _AppFreguency_ parameters are not provided, the template defaults to 15 minutes.
 
-Alternatively, you can deploy the template using the parameter file
+#### Create a deployment of the template (Using parameter file) 
+Type the following in your PowerShell session
 > New-AzResourceGroupDeployment 
   -Name FirstDeployment 
   -ResourceGroupName RG_LogicAppTest 
