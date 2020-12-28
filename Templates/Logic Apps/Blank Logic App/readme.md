@@ -6,14 +6,14 @@ This template allows you to create a new logic app with a trigger to run on a re
 From PowerShell, type the following to establish a connection to your subscription.
 > Connect-AzAccount
 
-##### Create or specify a Resource Group for your Logic App
+#### Create or specify a Resource Group for your Logic App
 From PowerShell, type the following to create a new Resource Group (if required) in one of the Azure Regions
 > New-AzResourceGroup -Name RG_LogicAppTest -Location "Central US"
 
 If you would like to deploy the Logic App to an existing Resource Group, use the following syntax
 > Get-AzResourceGroup -Name MyResourceGroup
 
-#### Create a deployment of the template (Not using parameter file) 
+#### Option 1: Create a deployment of the template (Not using parameter file) 
 Type the following in your PowerShell session
 >   New-AzResourceGroupDeployment 
   -Name FirstDeployment 
@@ -32,7 +32,7 @@ Type the following in your PowerShell session
 
 If the _AppInterval_ and _AppFreguency_ parameters are not provided, the template defaults to 15 minutes.
 
-#### Create a deployment of the template (Using parameter file) 
+#### Option 2: Create a deployment of the template (Using parameter file) 
 Type the following in your PowerShell session
 > New-AzResourceGroupDeployment 
   -Name FirstDeployment 
