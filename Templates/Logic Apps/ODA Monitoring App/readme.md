@@ -1,6 +1,8 @@
 # ODA Monitoring App
 This template allows you to create a new logic app to verify that an On Demand Assessment has run recently and, if so, to mail a summary of results to one or more recipients.  
 
+[![Deploy To Azure](https://raw.githubusercontent.com/Azure/azure-quickstart-templates/master/1-CONTRIBUTION-GUIDE/images/deploytoazure.svg?sanitize=true)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fgithub.com%2FRPesenko%2FAzure_Files%2Fblob%2Fmaster%2FTemplates%2FLogic%20Apps%2FODA%20Monitoring%20App%2FODA_Monitoring_template.json)
+
 ## Deploy the template with Powershell
 ### Connect to Azure
 From PowerShell, type the following to establish a connection to your subscription.
