@@ -1,6 +1,6 @@
 {
     "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
-    "contentVersion": "1.0.0.0",
+    "contentVersion": "1.0.0.2",
     "parameters": {
         "logicAppName": {
             "type": "string",
@@ -135,7 +135,7 @@
                     "actions": {
                         "Create_CSS_Header": {
                             "runAfter": {
-                                "Run_query_and_get_count_of_results": [
+                                "Get_count_of_recommendations": [
                                     "Succeeded"
                                 ]
                             },
@@ -151,23 +151,23 @@
                             }
                         },
                         "Evaluate_results": {
-                            "foreach": "@body('Run_query_and_get_count_of_results')?['value']",
+                            "foreach": "@body('Get_count_of_recommendations')?['value']",
                             "actions": {
                                 "Assessment_recommendation_count_more_than_10": {
                                     "actions": {
                                         "Create_HTML_table": {
                                             "runAfter": {
-                                                "Run_query_and_list_results_3": [
+                                                "Get_recommendation_list": [
                                                     "Succeeded"
                                                 ]
                                             },
                                             "type": "Table",
                                             "inputs": {
                                                 "format": "HTML",
-                                                "from": "@body('Run_query_and_list_results_3')?['value']"
+                                                "from": "@body('Get_recommendation_list')?['value']"
                                             }
                                         },
-                                        "Run_query_and_list_results_3": {
+                                        "Get_recommendation_list": {
                                             "runAfter": {},
                                             "type": "ApiConnection",
                                             "inputs": {
@@ -260,7 +260,7 @@
                             },
                             "type": "Foreach"
                         },
-                        "Run_query_and_get_count_of_results": {
+                        "Get_count_of_recommendations": {
                             "runAfter": {},
                             "type": "ApiConnection",
                             "inputs": {
