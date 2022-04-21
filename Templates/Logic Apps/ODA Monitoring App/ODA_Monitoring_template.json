@@ -188,7 +188,7 @@
                                                 }
                                             }
                                         },
-                                        "Send_an_email_(V2)": {
+                                        "Send_assessment_result_mail": {
                                             "runAfter": {
                                                 "Create_HTML_table": [
                                                     "Succeeded"
@@ -220,7 +220,7 @@
                                     "runAfter": {},
                                     "else": {
                                         "actions": {
-                                            "Send_an_email_(V2)_2": {
+                                            "Send_missing_results_mail": {
                                                 "runAfter": {},
                                                 "type": "ApiConnection",
                                                 "inputs": {
