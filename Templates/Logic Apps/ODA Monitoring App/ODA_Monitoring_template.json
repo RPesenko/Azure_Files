@@ -110,13 +110,13 @@
                         }
                     },
                     "triggers": {
-                        "Trigger_daily_at_7:00": {
+                        "Trigger_daily_at_8:00UTC": {
                             "recurrence": {
                                 "frequency": "Day",
                                 "interval": 1,
                                 "schedule": {
                                     "hours": [
-                                        "7"
+                                        "8"
                                     ]
                                 }
                             },
@@ -125,7 +125,7 @@
                                 "interval": 1,
                                 "schedule": {
                                     "hours": [
-                                        "7"
+                                        "8"
                                     ]
                                 }
                             },
@@ -188,7 +188,7 @@
                                                 }
                                             }
                                         },
-                                        "Send_an_email_(V2)": {
+                                        "Send_assessment_result_mail": {
                                             "runAfter": {
                                                 "Create_HTML_table": [
                                                     "Succeeded"
@@ -220,7 +220,7 @@
                                     "runAfter": {},
                                     "else": {
                                         "actions": {
-                                            "Send_an_email_(V2)_2": {
+                                            "Send_missing_result_mail": {
                                                 "runAfter": {},
                                                 "type": "ApiConnection",
                                                 "inputs": {
