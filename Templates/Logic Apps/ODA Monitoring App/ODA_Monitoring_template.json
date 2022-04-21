@@ -110,7 +110,7 @@
                         }
                     },
                     "triggers": {
-                        "Trigger_daily_at_7:00": {
+                        "Trigger_daily_at_7:00UTC": {
                             "recurrence": {
                                 "frequency": "Day",
                                 "interval": 1,
@@ -133,6 +133,27 @@
                         }
                     },
                     "actions": {
+                        "Run_query_and_get_count_of_results": {
+                            "runAfter": {},
+                            "type": "ApiConnection",
+                            "inputs": {
+                                "body": "[concat(parameters('AssessmentType'),'AssessmentRecommendation\n| count')]",
+                                "host": {
+                                    "connection": {
+                                        "name": "@parameters('$connections')['azuremonitorlogs']['connectionId']"
+                                    }
+                                },
+                                "method": "post",
+                                "path": "/queryData",
+                                "queries": {
+                                    "resourcegroups": "[parameters('workspaceResourceGroup')]",
+                                    "resourcename": "[parameters('ODAWorkspace')]",
+                                    "resourcetype": "Log Analytics Workspace",
+                                    "subscriptions": "[parameters('workspaceSubscriptionId')]",
+                                    "timerange": "Last 7 days"
+                                }
+                            }
+                        },
                         "Create_CSS_Header": {
                             "runAfter": {
                                 "Run_query_and_get_count_of_results": [
@@ -155,19 +176,7 @@
                             "actions": {
                                 "Assessment_recommendation_count_more_than_10": {
                                     "actions": {
-                                        "Create_HTML_table": {
-                                            "runAfter": {
-                                                "Run_query_and_list_results_3": [
-                                                    "Succeeded"
-                                                ]
-                                            },
-                                            "type": "Table",
-                                            "inputs": {
-                                                "format": "HTML",
-                                                "from": "@body('Run_query_and_list_results_3')?['value']"
-                                            }
-                                        },
-                                        "Run_query_and_list_results_3": {
+                                        "Get_Assessment_Results": {
                                             "runAfter": {},
                                             "type": "ApiConnection",
                                             "inputs": {
@@ -188,7 +197,23 @@
                                                 }
                                             }
                                         },
+<<<<<<< HEAD
                                         "Send_assessment_result_mail": {
+=======
+                                        "Create_HTML_table": {
+                                            "runAfter": {
+                                                "Get_Assessment_Results": [
+                                                    "Succeeded"
+                                                ]
+                                            },
+                                            "type": "Table",
+                                            "inputs": {
+                                                "format": "HTML",
+                                                "from": "@body('Get_Assessment_Results')?['value']"
+                                            }
+                                        },
+                                        "Send_assessment_recommendation_mail": {
+>>>>>>> 41c0894db11844cfc87666075e17ce940cd6ae3f
                                             "runAfter": {
                                                 "Create_HTML_table": [
                                                     "Succeeded"
@@ -259,27 +284,6 @@
                                 ]
                             },
                             "type": "Foreach"
-                        },
-                        "Run_query_and_get_count_of_results": {
-                            "runAfter": {},
-                            "type": "ApiConnection",
-                            "inputs": {
-                                "body": "[concat(parameters('AssessmentType'),'AssessmentRecommendation\n| count')]",
-                                "host": {
-                                    "connection": {
-                                        "name": "@parameters('$connections')['azuremonitorlogs']['connectionId']"
-                                    }
-                                },
-                                "method": "post",
-                                "path": "/queryData",
-                                "queries": {
-                                    "resourcegroups": "[parameters('workspaceResourceGroup')]",
-                                    "resourcename": "[parameters('ODAWorkspace')]",
-                                    "resourcetype": "Log Analytics Workspace",
-                                    "subscriptions": "[parameters('workspaceSubscriptionId')]",
-                                    "timerange": "Last 7 days"
-                                }
-                            }
                         }
                     },
                     "outputs": {}
