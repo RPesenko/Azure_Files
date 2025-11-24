@@ -62,7 +62,7 @@
                     },
                     "resources": [
                         {
-                            "type": "Microsoft.Insights/dataCollectionRules",
+                            "type": "microsoft.insights/dataCollectionRules",
                             "apiVersion": "2023-03-11",
                             "name": "[parameters('dataCollectionRuleName')]",
                             "location": "[[parameters('workspaceRegion')]",
