@@ -7,7 +7,7 @@
             "metadata": {
                 "description": "Specifies the name of the data collection rule to create."
             },
-            "defaultValue": "CTI-DCR-TLS_Monitoring"
+            "defaultValue": "CTI-DCR-PAC_Monitoring"
         },
         "workspaceResourceId": {
             "type": "string",
@@ -78,67 +78,40 @@
                                             ],
                                             "extensionName": "ChangeTracking-Windows",
                                             "extensionSettings": {
-                                                "enableFiles": false,
-                                                "enableSoftware": false,
+                                                "enableFiles": true,
+                                                "enableSoftware": true,
                                                 "enableRegistry": true,
-                                                "enableServices": false,
-                                                "enableInventory": false,
+                                                "enableServices": true,
+                                                "enableInventory": true,
                                                 "registrySettings": {
                                                     "registryCollectionFrequency": 3000,
                                                     "registryInfo": [
                                                         {
-                                                            "name": "DotNetVersion",
-                                                            "groupTag": "TLS_Monitoring",
+                                                            "name": "PAC_Signature_Validation_Level",
+                                                            "groupTag": "PAC_Monitoring",
                                                             "enabled": true,
                                                             "recurse": false,
-                                                            "description": "Validate if machine is running .NET Framework 4.7 or higher",
-                                                            "keyName": "HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\NET Framework Setup\\NDP\\v4\\Full",
-                                                            "valueName": "Release"
+                                                            "description": "Determine PAC Validation level by monitoring PacSignatureValidationLevel registry value",
+                                                            "keyName": "HKEY_LOCAL_MACHINE\\System\\CurrentControlSet\\Control\\LSA\\Kerberos\\Parameters",
+                                                            "valueName": "PacSignatureValidationLevel"
                                                         },
                                                         {
-                                                            "name": "TLSProtocols",
-                                                            "groupTag": "TLS_Monitoring",
-                                                            "enabled": true,
-                                                            "recurse": true,
-                                                            "description": "value to monitor Schannel TLS Protocols",
-                                                            "keyName": "HKEY_LOCAL_MACHINE\\System\\CurrentControlSet\\Control\\SecurityProviders\\SCHANNEL\\Protocols",
-                                                            "valueName": ""
-                                                        },
-                                                        {
-                                                            "name": "StrongCrypto_3.5_32bit",
-                                                            "groupTag": "TLS_Monitoring",
+                                                            "name": "CrossDomainFilteringLevel",
+                                                            "groupTag": "PAC_Monitoring",
                                                             "enabled": true,
                                                             "recurse": false,
-                                                            "description": "value to monitor Strong Cryptography for .NET Framework 3.5 32-bit",
-                                                            "keyName": "HKEY_LOCAL_MACHINE\\Software\\WOW6432Node\\Microsoft\\.NETFramework\\v2.0.50727",
-                                                            "valueName": "SchUseStrongCrypto"
+                                                            "description": "Determine Cross Domain Filtering level by monitoring CrossDomainFilteringLevel registry value",
+                                                            "keyName": "HKEY_LOCAL_MACHINE\\System\\CurrentControlSet\\Control\\LSA\\Kerberos\\Parameters",
+                                                            "valueName": "CrossDomainFilteringLevel"
                                                         },
                                                         {
-                                                            "name": "StrongCrypto_4.0_32bit",
-                                                            "groupTag": "TLS_Monitoring",
+                                                            "name": "Audit_Kerberos_Ticket_Logon_Events",
+                                                            "groupTag": "PAC_Monitoring",
                                                             "enabled": true,
                                                             "recurse": false,
-                                                            "description": "value to monitor Strong Cryptography for .NET Framework 4.0 32-bit",
-                                                            "keyName": "HKEY_LOCAL_MACHINE\\Software\\Wow6432Node\\Microsoft\\.NETFramework\\v4.0.30319",
-                                                            "valueName": "SchUseStrongCrypto"
-                                                        },
-                                                        {
-                                                            "name": "StrongCrypto_3.5_64bit",
-                                                            "groupTag": "TLS_Monitoring",
-                                                            "enabled": true,
-                                                            "recurse": false,
-                                                            "description": "value to monitor Strong Cryptography for .NET Framework 3.5 64-bit",
-                                                            "keyName": "HKEY_LOCAL_MACHINE\\Software\\Microsoft\\.NETFramework\\v2.0.50727",
-                                                            "valueName": "SchUseStrongCrypto"
-                                                        },
-                                                        {
-                                                            "name": "StrongCrypto_4.0_64bit",
-                                                            "groupTag": "TLS_Monitoring",
-                                                            "enabled": true,
-                                                            "recurse": false,
-                                                            "description": "value to monitor Strong Cryptography for .NET Framework 4.0 64-bit",
-                                                            "keyName": "HKEY_LOCAL_MACHINE\\Software\\Microsoft\\.NETFramework\\v4.0.30319",
-                                                            "valueName": "SchUseStrongCrypto"
+                                                            "description": "Determine Audit Kerberos Ticket Logon Events by monitoring AuditKerberosTicketLogonEvents registry value",
+                                                            "keyName": "HKEY_LOCAL_MACHINE\\System\\CurrentControlSet\\Services\\Netlogon\\Parameters",
+                                                            "valueName": "AuditKerberosTicketLogonEvents"
                                                         }
                                                     ]
                                                 },
@@ -165,11 +138,11 @@
                                             ],
                                             "extensionName": "ChangeTracking-Linux",
                                             "extensionSettings": {
-                                                "enableFiles": true,
-                                                "enableSoftware": true,
+                                                "enableFiles": false,
+                                                "enableSoftware": false,
                                                 "enableRegistry": false,
-                                                "enableServices": true,
-                                                "enableInventory": true,
+                                                "enableServices": false,
+                                                "enableInventory": false,
                                                 "fileSettings": {
                                                     "fileCollectionFrequency": 900,
                                                     "fileInfo": [
