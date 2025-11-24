@@ -1,0 +1,330 @@
+{
+    "$schema": "http://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "dataCollectionRuleName": {
+            "type": "string",
+            "metadata": {
+                "description": "Specifies the name of the data collection rule to create."
+            },
+            "defaultValue": "CTI-DCR-TLS_Monitoring"
+        },
+        "workspaceResourceId": {
+            "type": "string",
+            "metadata": {
+                "description": "Specifies the Azure resource ID of the Log Analytics workspace to use to store change tracking data."
+            }
+        }
+    },
+    "variables": {
+        "subscriptionId": "[substring(parameters('workspaceResourceId'), 15, sub(indexOf(parameters('workspaceResourceId'), '/resourceGroups/'), 15))]",
+        "resourceGroupName": "[substring(parameters('workspaceResourceId'), add(indexOf(parameters('workspaceResourceId'), '/resourceGroups/'), 16), sub(sub(indexOf(parameters('workspaceResourceId'), '/providers/'), indexOf(parameters('workspaceResourceId'), '/resourceGroups/')),16))]",
+        "workspaceName": "[substring(parameters('workspaceResourceId'), add(lastIndexOf(parameters('workspaceResourceId'), '/'), 1), sub(length(parameters('workspaceResourceId')), add(lastIndexOf(parameters('workspaceResourceId'), '/'), 1)))]"
+    },
+    "resources": [
+        {
+            "type": "microsoft.resources/deployments",
+            "name": "get-workspace-region",
+            "apiVersion": "2020-08-01",
+            "properties": {
+                "mode": "Incremental",
+                "template": {
+                    "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+                    "contentVersion": "1.0.0.0",
+                    "resources": [],
+                    "outputs": {
+                        "workspaceLocation": {
+                            "type": "string",
+                            "value": "[reference(parameters('workspaceResourceId'), '2020-08-01', 'Full').location]"
+                        }
+                    }
+                }
+            }
+        },
+        {
+            "type": "microsoft.resources/deployments",
+            "name": "CtDcr-Deployment",
+            "apiVersion": "2020-08-01",
+            "properties": {
+                "mode": "Incremental",
+                "parameters": {
+                    "workspaceRegion": {
+                        "value": "[reference('get-workspace-region').outputs.workspaceLocation.value]"
+                    }
+                },
+                "template": {
+                    "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+                    "contentVersion": "1.0.0.0",
+                    "parameters": {
+                        "workspaceRegion": {
+                            "type": "string"
+                        }
+                    },
+                    "resources": [
+                        {
+                            "type": "Microsoft.Insights/dataCollectionRules",
+                            "apiVersion": "2023-03-11",
+                            "name": "[parameters('dataCollectionRuleName')]",
+                            "location": "[[parameters('workspaceRegion')]",
+                            "properties": {
+                                "description": "Data collection rule for CT.",
+                                "dataSources": {
+                                    "extensions": [
+                                        {
+                                            "streams": [
+                                                "Microsoft-ConfigurationChange",
+                                                "Microsoft-ConfigurationChangeV2",
+                                                "Microsoft-ConfigurationData"
+                                            ],
+                                            "extensionName": "ChangeTracking-Windows",
+                                            "extensionSettings": {
+                                                "enableFiles": false,
+                                                "enableSoftware": false,
+                                                "enableRegistry": true,
+                                                "enableServices": false,
+                                                "enableInventory": false,
+                                                "registrySettings": {
+                                                    "registryCollectionFrequency": 3000,
+                                                    "registryInfo": [
+                                                        {
+                                                            "name": "DotNetVersion",
+                                                            "groupTag": "TLS_Monitoring",
+                                                            "enabled": true,
+                                                            "recurse": false,
+                                                            "description": "Validate if machine is running .NET Framework 4.7 or higher",
+                                                            "keyName": "HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\NET Framework Setup\\NDP\\v4\\Full",
+                                                            "valueName": "Release"
+                                                        },
+                                                        {
+                                                            "name": "SSL2.0_Client",
+                                                            "groupTag": "TLS_Monitoring",
+                                                            "enabled": true,
+                                                            "recurse": true,
+                                                            "description": "value to monitor SSL 2.0 Client",
+                                                            "keyName": "HKEY_LOCAL_MACHINE\\System\\CurrentControlSet\\Control\\SecurityProviders\\SCHANNEL\\Protocols\\SSL 2.0\\Client",
+                                                            "valueName": ""
+                                                        },
+                                                        {
+                                                            "name": "SSL2.0_Server",
+                                                            "groupTag": "TLS_Monitoring",
+                                                            "enabled": true,
+                                                            "recurse": true,
+                                                            "description": "value to monitor SSL 2.0 Server",
+                                                            "keyName": "HKEY_LOCAL_MACHINE\\System\\CurrentControlSet\\Control\\SecurityProviders\\SCHANNEL\\Protocols\\SSL 2.0\\Server",
+                                                            "valueName": ""
+                                                        },
+                                                        {
+                                                            "name": "SSL3.0_Client",
+                                                            "groupTag": "TLS_Monitoring",
+                                                            "enabled": true,
+                                                            "recurse": true,
+                                                            "description": "value to monitor SSL 3.0 Client",
+                                                            "keyName": "HKEY_LOCAL_MACHINE\\System\\CurrentControlSet\\Control\\SecurityProviders\\SCHANNEL\\Protocols\\SSL 3.0\\Client",
+                                                            "valueName": ""
+                                                        },
+                                                        {
+                                                            "name": "SSL3.0_Server",
+                                                            "groupTag": "TLS_Monitoring",
+                                                            "enabled": true,
+                                                            "recurse": true,
+                                                            "description": "value to monitor SSL 3.0 Server",
+                                                            "keyName": "HKEY_LOCAL_MACHINE\\System\\CurrentControlSet\\Control\\SecurityProviders\\SCHANNEL\\Protocols\\SSL 3.0\\Server",
+                                                            "valueName": ""
+                                                        },
+                                                        {
+                                                            "name": "TLS1.0_Client",
+                                                            "groupTag": "TLS_Monitoring",
+                                                            "enabled": true,
+                                                            "recurse": true,
+                                                            "description": "value to monitor TLS 1.0 Client",
+                                                            "keyName": "HKEY_LOCAL_MACHINE\\System\\CurrentControlSet\\Control\\SecurityProviders\\SCHANNEL\\Protocols\\TLS 1.0\\Client",
+                                                            "valueName": ""
+                                                        },
+                                                        {
+                                                            "name": "TLS1.0_Server",
+                                                            "groupTag": "TLS_Monitoring",
+                                                            "enabled": true,
+                                                            "recurse": true,
+                                                            "description": "value to monitor TLS 1.0 Server",
+                                                            "keyName": "HKEY_LOCAL_MACHINE\\System\\CurrentControlSet\\Control\\SecurityProviders\\SCHANNEL\\Protocols\\TLS 1.0\\Server",
+                                                            "valueName": ""
+                                                        },
+                                                        {
+                                                            "name": "TLS1.1_Client",
+                                                            "groupTag": "TLS_Monitoring",
+                                                            "enabled": true,
+                                                            "recurse": true,
+                                                            "description": "value to monitor TLS 1.1 Client",
+                                                            "keyName": "HKEY_LOCAL_MACHINE\\System\\CurrentControlSet\\Control\\SecurityProviders\\SCHANNEL\\Protocols\\TLS 1.1\\Client",
+                                                            "valueName": ""
+                                                        },
+                                                        {
+                                                            "name": "TLS1.1_Server",
+                                                            "groupTag": "TLS_Monitoring",
+                                                            "enabled": true,
+                                                            "recurse": true,
+                                                            "description": "value to monitor TLS 1.1 Server",
+                                                            "keyName": "HKEY_LOCAL_MACHINE\\System\\CurrentControlSet\\Control\\SecurityProviders\\SCHANNEL\\Protocols\\TLS 1.1\\Server",
+                                                            "valueName": ""
+                                                        },
+                                                        {
+                                                            "name": "TLS1.2_Client",
+                                                            "groupTag": "TLS_Monitoring",
+                                                            "enabled": true,
+                                                            "recurse": true,
+                                                            "description": "value to monitor TLS 1.2 Client",
+                                                            "keyName": "HKEY_LOCAL_MACHINE\\System\\CurrentControlSet\\Control\\SecurityProviders\\SCHANNEL\\Protocols\\TLS 1.2\\Client",
+                                                            "valueName": ""
+                                                        },
+                                                        {
+                                                            "name": "TLS1.2_Server",
+                                                            "groupTag": "TLS_Monitoring",
+                                                            "enabled": true,
+                                                            "recurse": true,
+                                                            "description": "value to monitor TLS 1.2 Server",
+                                                            "keyName": "HKEY_LOCAL_MACHINE\\System\\CurrentControlSet\\Control\\SecurityProviders\\SCHANNEL\\Protocols\\TLS 1.2\\Server",
+                                                            "valueName": ""
+                                                        },
+                                                        {
+                                                            "name": "StrongCrypto_3.5_32bit",
+                                                            "groupTag": "TLS_Monitoring",
+                                                            "enabled": true,
+                                                            "recurse": false,
+                                                            "description": "value to monitor Strong Cryptography for .NET Framework 3.5 32-bit",
+                                                            "keyName": "HKEY_LOCAL_MACHINE\\Software\\WOW6432Node\\Microsoft\\.NETFramework\\v2.0.50727",
+                                                            "valueName": "SchUseStrongCrypto"
+                                                        },
+                                                        {
+                                                            "name": "StrongCrypto_4.0_32bit",
+                                                            "groupTag": "TLS_Monitoring",
+                                                            "enabled": true,
+                                                            "recurse": false,
+                                                            "description": "value to monitor Strong Cryptography for .NET Framework 4.0 32-bit",
+                                                            "keyName": "HKEY_LOCAL_MACHINE\\Software\\Wow6432Node\\Microsoft\\.NETFramework\\v4.0.30319",
+                                                            "valueName": "SchUseStrongCrypto"
+                                                        },
+                                                        {
+                                                            "name": "StrongCrypto_3.5_64bit",
+                                                            "groupTag": "TLS_Monitoring",
+                                                            "enabled": true,
+                                                            "recurse": false,
+                                                            "description": "value to monitor Strong Cryptography for .NET Framework 3.5 64-bit",
+                                                            "keyName": "HKEY_LOCAL_MACHINE\\Software\\Microsoft\\.NETFramework\\v2.0.50727",
+                                                            "valueName": "SchUseStrongCrypto"
+                                                        },
+                                                        {
+                                                            "name": "StrongCrypto_4.0_64bit",
+                                                            "groupTag": "TLS_Monitoring",
+                                                            "enabled": true,
+                                                            "recurse": false,
+                                                            "description": "value to monitor Strong Cryptography for .NET Framework 4.0 64-bit",
+                                                            "keyName": "HKEY_LOCAL_MACHINE\\Software\\Microsoft\\.NETFramework\\v4.0.30319",
+                                                            "valueName": "SchUseStrongCrypto"
+                                                        }
+                                                    ]
+                                                },
+                                                "fileSettings": {
+                                                    "fileCollectionFrequency": 2700
+                                                },
+                                                "softwareSettings": {
+                                                    "softwareCollectionFrequency": 1800
+                                                },
+                                                "inventorySettings": {
+                                                    "inventoryCollectionFrequency": 36000
+                                                },
+                                                "servicesSettings": {
+                                                    "serviceCollectionFrequency": 1800
+                                                }
+                                            },
+                                            "name": "CTDataSource-Windows"
+                                        },
+                                        {
+                                            "streams": [
+                                                "Microsoft-ConfigurationChange",
+                                                "Microsoft-ConfigurationChangeV2",
+                                                "Microsoft-ConfigurationData"
+                                            ],
+                                            "extensionName": "ChangeTracking-Linux",
+                                            "extensionSettings": {
+                                                "enableFiles": true,
+                                                "enableSoftware": true,
+                                                "enableRegistry": false,
+                                                "enableServices": true,
+                                                "enableInventory": true,
+                                                "fileSettings": {
+                                                    "fileCollectionFrequency": 900,
+                                                    "fileInfo": [
+                                                        {
+                                                            "name": "ChangeTrackingLinuxPath_default",
+                                                            "description": "",
+                                                            "destinationPath": "/etc/.*.conf",
+                                                            "pathType": "File",
+                                                            "recurse": true,
+                                                            "links": "Follow",
+                                                            "uploadContent": false,
+                                                            "maxOutputSize": 500000,
+                                                            "groupTag": "Recommended",
+                                                            "maxContentsReturnable": 5000000,
+                                                            "useSudo": true,
+                                                            "enabled": false
+                                                        }
+                                                    ]
+                                                },
+                                                "softwareSettings": {
+                                                    "softwareCollectionFrequency": 300
+                                                },
+                                                "inventorySettings": {
+                                                    "inventoryCollectionFrequency": 36000
+                                                },
+                                                "servicesSettings": {
+                                                    "serviceCollectionFrequency": 300
+                                                }
+                                            },
+                                            "name": "CTDataSource-Linux"
+                                        }
+                                    ]
+                                },
+                                "destinations": {
+                                    "logAnalytics": [
+                                        {
+                                            "workspaceResourceId": "[parameters('workspaceResourceId')]",
+                                            "name": "Microsoft-CT-Dest"
+                                        }
+                                    ]
+                                },
+                                "dataFlows": [
+                                    {
+                                        "streams": [
+                                            "Microsoft-ConfigurationChange",
+                                            "Microsoft-ConfigurationChangeV2",
+                                            "Microsoft-ConfigurationData"
+                                        ],
+                                        "destinations": [
+                                            "Microsoft-CT-Dest"
+                                        ]
+                                    }
+                                ]
+                            }
+                        },
+                        {
+                            "type": "Microsoft.OperationsManagement/solutions",
+                            "name": "[Concat('ChangeTracking', '(', variables('workspaceName'), ')')]",
+                            "location": "[[parameters('workspaceRegion')]",
+                            "apiVersion": "2015-11-01-preview",
+                            "id": "[Concat('/subscriptions/', variables('subscriptionId'), '/resourceGroups/', variables('resourceGroupName'), '/providers/Microsoft.OperationsManagement/solutions/ChangeTracking', '(', variables('workspaceName'), ')')]",
+                            "properties": {
+                                "workspaceResourceId": "[parameters('workspaceResourceId')]"
+                            },
+                            "plan": {
+                                "name": "[Concat('ChangeTracking', '(', variables('workspaceName'), ')')]",
+                                "product": "OMSGallery/ChangeTracking",
+                                "promotionCode": "",
+                                "publisher": "Microsoft"
+                            }
+                        }
+                    ]
+                }
+            }
+        }
+    ]
+}
