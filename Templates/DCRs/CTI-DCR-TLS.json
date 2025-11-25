@@ -102,7 +102,7 @@
                                                             "recurse": true,
                                                             "description": "value to monitor Schannel TLS Protocols",
                                                             "keyName": "HKEY_LOCAL_MACHINE\\System\\CurrentControlSet\\Control\\SecurityProviders\\SCHANNEL\\Protocols",
-                                                            "valueName": ""
+                                                            "valueName": "*"
                                                         },
                                                         {
                                                             "name": "StrongCrypto_3.5_32bit",
