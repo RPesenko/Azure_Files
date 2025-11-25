@@ -1,5 +1,5 @@
 {
-    "$schema": "http://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
+    "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
     "contentVersion": "1.0.0.0",
     "parameters": {
         "dataCollectionRuleName": {
@@ -65,7 +65,7 @@
                             "type": "microsoft.insights/dataCollectionRules",
                             "apiVersion": "2023-03-11",
                             "name": "[parameters('dataCollectionRuleName')]",
-                            "location": "[[parameters('workspaceRegion')]",
+                            "location": "[parameters('workspaceRegion')]",
                             "properties": {
                                 "description": "Data collection rule for CT.",
                                 "dataSources": {
@@ -201,7 +201,7 @@
                         {
                             "type": "Microsoft.OperationsManagement/solutions",
                             "name": "[Concat('ChangeTracking', '(', variables('workspaceName'), ')')]",
-                            "location": "[[parameters('workspaceRegion')]",
+                            "location": "[parameters('workspaceRegion')]",
                             "apiVersion": "2015-11-01-preview",
                             "id": "[Concat('/subscriptions/', variables('subscriptionId'), '/resourceGroups/', variables('resourceGroupName'), '/providers/Microsoft.OperationsManagement/solutions/ChangeTracking', '(', variables('workspaceName'), ')')]",
                             "properties": {
