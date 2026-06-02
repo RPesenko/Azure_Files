@@ -106,7 +106,7 @@
                     "resources": [
                         {
                             "type": "microsoft.insights/dataCollectionRules",
-                            "apiVersion": "2023-03-11",
+                            "apiVersion": "2024-03-11",
                             "name": "[parameters('dataCollectionRuleName')]",
                             "location": "[parameters('workspaceRegion')]",
                             "properties": {
@@ -302,22 +302,6 @@
                                         ]
                                     }
                                 ]
-                            }
-                        },
-                        {
-                            "type": "Microsoft.OperationsManagement/solutions",
-                            "name": "[Concat('ChangeTracking', '(', parameters('workspaceName'), ')')]",
-                            "location": "[parameters('workspaceRegion')]",
-                            "apiVersion": "2015-11-01",
-                            "id": "[Concat('/subscriptions/', parameters('subscriptionId'), '/resourceGroups/', parameters('resourceGroupName'), '/providers/Microsoft.OperationsManagement/solutions/ChangeTracking', '(', parameters('workspaceName'), ')')]",
-                            "properties": {
-                                "workspaceResourceId": "[parameters('workspaceResourceId')]"
-                            },
-                            "plan": {
-                                "name": "[Concat('ChangeTracking', '(', parameters('workspaceName'), ')')]",
-                                "product": "OMSGallery/ChangeTracking",
-                                "promotionCode": "",
-                                "publisher": "Microsoft"
                             }
                         }
                     ]
