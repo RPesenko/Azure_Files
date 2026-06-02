@@ -28,9 +28,19 @@
             "apiVersion": "2020-08-01",
             "properties": {
                 "mode": "Incremental",
+                "parameters": {
+                    "workspaceResourceId": {
+                        "value": "[parameters('workspaceResourceId')]"
+                    }
+                },
                 "template": {
                     "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
                     "contentVersion": "1.0.0.0",
+                    "parameters": {
+                        "workspaceResourceId": {
+                            "type": "string"
+                        }
+                    },
                     "resources": [],
                     "outputs": {
                         "workspaceLocation": {
@@ -45,6 +55,9 @@
             "type": "microsoft.resources/deployments",
             "name": "CtDcr-Deployment",
             "apiVersion": "2020-08-01",
+            "dependsOn": [
+                "[resourceId('microsoft.resources/deployments', 'get-workspace-region')]"
+            ],
             "properties": {
                 "mode": "Incremental",
                 "parameters": {
@@ -53,6 +66,18 @@
                     },
                     "dataCollectionRuleName": {
                         "value": "[parameters('dataCollectionRuleName')]"
+                    },
+                    "workspaceResourceId": {
+                        "value": "[parameters('workspaceResourceId')]"
+                    },
+                    "subscriptionId": {
+                        "value": "[variables('subscriptionId')]"
+                    },
+                    "resourceGroupName": {
+                        "value": "[variables('resourceGroupName')]"
+                    },
+                    "workspaceName": {
+                        "value": "[variables('workspaceName')]"
                     }
                 },
                 "template": {
@@ -63,6 +88,18 @@
                             "type": "string"
                         },
                         "dataCollectionRuleName": {
+                            "type": "string"
+                        },
+                        "workspaceResourceId": {
+                            "type": "string"
+                        },
+                        "subscriptionId": {
+                            "type": "string"
+                        },
+                        "resourceGroupName": {
+                            "type": "string"
+                        },
+                        "workspaceName": {
                             "type": "string"
                         }
                     },
@@ -269,15 +306,15 @@
                         },
                         {
                             "type": "Microsoft.OperationsManagement/solutions",
-                            "name": "[Concat('ChangeTracking', '(', variables('workspaceName'), ')')]",
+                            "name": "[Concat('ChangeTracking', '(', parameters('workspaceName'), ')')]",
                             "location": "[parameters('workspaceRegion')]",
-                            "apiVersion": "2015-11-01-preview",
-                            "id": "[Concat('/subscriptions/', variables('subscriptionId'), '/resourceGroups/', variables('resourceGroupName'), '/providers/Microsoft.OperationsManagement/solutions/ChangeTracking', '(', variables('workspaceName'), ')')]",
+                            "apiVersion": "2015-11-01",
+                            "id": "[Concat('/subscriptions/', parameters('subscriptionId'), '/resourceGroups/', parameters('resourceGroupName'), '/providers/Microsoft.OperationsManagement/solutions/ChangeTracking', '(', parameters('workspaceName'), ')')]",
                             "properties": {
                                 "workspaceResourceId": "[parameters('workspaceResourceId')]"
                             },
                             "plan": {
-                                "name": "[Concat('ChangeTracking', '(', variables('workspaceName'), ')')]",
+                                "name": "[Concat('ChangeTracking', '(', parameters('workspaceName'), ')')]",
                                 "product": "OMSGallery/ChangeTracking",
                                 "promotionCode": "",
                                 "publisher": "Microsoft"
