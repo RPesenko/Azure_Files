@@ -50,6 +50,9 @@
                 "parameters": {
                     "workspaceRegion": {
                         "value": "[reference('get-workspace-region').outputs.workspaceLocation.value]"
+                    },
+                    "dataCollectionRuleName": {
+                        "value": "[parameters('dataCollectionRuleName')]"
                     }
                 },
                 "template": {
@@ -57,6 +60,9 @@
                     "contentVersion": "1.0.0.0",
                     "parameters": {
                         "workspaceRegion": {
+                            "type": "string"
+                        },
+                        "dataCollectionRuleName": {
                             "type": "string"
                         }
                     },
