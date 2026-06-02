@@ -1,0 +1,57 @@
+{
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "workbookDisplayName": {
+      "type": "string",
+      "defaultValue": "Azure Arc Status workbook",
+      "metadata": {
+        "description": "The friendly name for the workbook that is used in the Gallery or Saved List.  This name must be unique within a resource group."
+      }
+    },
+    "workbookType": {
+      "type": "string",
+      "defaultValue": "workbook",
+      "metadata": {
+        "description": "The gallery that the workbook will been shown under. Supported values include workbook, tsg, etc. Usually, this is 'workbook'"
+      }
+    },
+    "workbookSourceId": {
+      "type": "string",
+      "defaultValue": " ",
+      "metadata": {
+        "description": "The id of resource instance to which the workbook will be associated"
+      }
+    },
+    "workbookId": {
+      "type": "string",
+      "defaultValue": "[newGuid()]",
+      "metadata": {
+        "description": "The unique guid for this workbook instance"
+      }
+    }
+  },
+  "resources": [
+    {
+      "name": "[parameters('workbookId')]",
+      "type": "microsoft.insights/workbooks",
+      "location": "[resourceGroup().location]",
+      "apiVersion": "2022-04-01",
+      "dependsOn": [],
+      "kind": "shared",
+      "properties": {
+        "displayName": "[parameters('workbookDisplayName')]",
+        "serializedData": "{\"version\":\"Notebook/1.0\",\"items\":[{\"type\":1,\"content\":{\"json\":\"## Azure Arc Agents\",\"style\":\"upsell\"},\"customWidth\":\"100\",\"name\":\"text - 0\",\"styleSettings\":{\"maxWidth\":\"100\"}},{\"type\":3,\"content\":{\"version\":\"KqlItem/1.0\",\"query\":\"arg(\\\"\\\").Resources\\r\\n| where type == 'microsoft.hybridcompute/machines'\\r\\n| extend ConnectState = tostring(properties.status)\\r\\n| where ConnectState == \\\"Connected\\\"\\r\\n| project name, ConnectState, resourceGroup, location, ResourceId = id\",\"size\":0,\"title\":\"Connected Arc Agents\",\"noDataMessage\":\"No agents are currently connected\",\"timeContext\":{\"durationMs\":86400000},\"showRefreshButton\":true,\"showExportToExcel\":true,\"queryType\":0,\"resourceType\":\"microsoft.operationalinsights/workspaces\",\"gridSettings\":{\"sortBy\":[{\"itemKey\":\"name\",\"sortOrder\":1}]},\"sortBy\":[{\"itemKey\":\"name\",\"sortOrder\":1}]},\"customWidth\":\"50\",\"name\":\"query - 1\",\"styleSettings\":{\"maxWidth\":\"50\"}},{\"type\":3,\"content\":{\"version\":\"KqlItem/1.0\",\"query\":\"arg(\\\"\\\").Resources\\r\\n| where type == 'microsoft.hybridcompute/machines'\\r\\n| extend ConnectState = tostring(properties.status)\\r\\n| where ConnectState == \\\"Disconnected\\\"\\r\\n| project name, ConnectState, resourceGroup, location, ResourceId = id\\r\\n| sort by resourceGroup, name\",\"size\":0,\"title\":\"Disconnected Azure Arc Agents\",\"noDataMessage\":\"No agents are disconnected currently\",\"timeContext\":{\"durationMs\":86400000},\"showRefreshButton\":true,\"showExportToExcel\":true,\"queryType\":0,\"resourceType\":\"microsoft.operationalinsights/workspaces\"},\"customWidth\":\"50\",\"name\":\"Disconnected Azure Arc Agents\",\"styleSettings\":{\"maxWidth\":\"50\"}},{\"type\":3,\"content\":{\"version\":\"KqlItem/1.0\",\"query\":\"// Query Arc Agents from Graph, join with Heartbeat data\\r\\n// sort by last heartbeat and show connectec state\\r\\narg(\\\"\\\").Resources\\r\\n| where type == 'microsoft.hybridcompute/machines'\\r\\n| project ResourceId = id, name, ConnectState = tostring(properties.status)\\r\\n| join (Heartbeat\\r\\n  | where TimeGenerated > ago(15d)\\r\\n  | summarize lastHeartBeat = max(TimeGenerated) by ResourceId)\\r\\n  on ResourceId\\r\\n| project name, ConnectState, lastHeartBeat, ResourceId\\r\\n| sort by lastHeartBeat asc \",\"size\":0,\"title\":\"Arc Agents by connected state with last AMA heartbeat\",\"showRefreshButton\":true,\"showExportToExcel\":true,\"queryType\":0,\"resourceType\":\"microsoft.operationalinsights/workspaces\",\"gridSettings\":{\"sortBy\":[{\"itemKey\":\"lastHeartBeat\",\"sortOrder\":1}]},\"sortBy\":[{\"itemKey\":\"lastHeartBeat\",\"sortOrder\":1}]},\"customWidth\":\"60\",\"name\":\"query - 3\",\"styleSettings\":{\"maxWidth\":\"60\",\"showBorder\":true}}],\"isLocked\":false,\"fallbackResourceIds\":[\"/subscriptions/12a4da60-8f03-43ae-8200-5d9cc0d2c682/resourceGroups/AzureArcTestRG/providers/Microsoft.OperationalInsights/workspaces/AzureArc-Logs-Workspace\"]}",
+        "version": "1.0",
+        "sourceId": "[parameters('workbookSourceId')]",
+        "category": "[parameters('workbookType')]"
+      }
+    }
+  ],
+  "outputs": {
+    "workbookId": {
+      "type": "string",
+      "value": "[resourceId( 'microsoft.insights/workbooks', parameters('workbookId'))]"
+    }
+  },
+  "$schema": "http://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#"
+}
