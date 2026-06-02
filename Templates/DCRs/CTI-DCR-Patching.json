@@ -1,5 +1,5 @@
 {
-    "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+    "$schema": "http://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
     "contentVersion": "1.0.0.0",
     "parameters": {
         "dataCollectionRuleName": {
@@ -7,7 +7,7 @@
             "metadata": {
                 "description": "Specifies the name of the data collection rule to create."
             },
-            "defaultValue": "CTI-DCR-ALL"
+            "defaultValue": "CTI-DCR-Patching"
         },
         "workspaceResourceId": {
             "type": "string",
@@ -28,19 +28,9 @@
             "apiVersion": "2020-08-01",
             "properties": {
                 "mode": "Incremental",
-                "parameters": {
-                    "workspaceResourceId": {
-                        "value": "[parameters('workspaceResourceId')]"
-                    }
-                },
                 "template": {
                     "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
                     "contentVersion": "1.0.0.0",
-                    "parameters": {
-                        "workspaceResourceId": {
-                            "type": "string"
-                        }
-                    },
                     "resources": [],
                     "outputs": {
                         "workspaceLocation": {
@@ -55,29 +45,11 @@
             "type": "microsoft.resources/deployments",
             "name": "CtDcr-Deployment",
             "apiVersion": "2020-08-01",
-            "dependsOn": [
-                "[resourceId('microsoft.resources/deployments', 'get-workspace-region')]"
-            ],
             "properties": {
                 "mode": "Incremental",
                 "parameters": {
                     "workspaceRegion": {
                         "value": "[reference('get-workspace-region').outputs.workspaceLocation.value]"
-                    },
-                    "dataCollectionRuleName": {
-                        "value": "[parameters('dataCollectionRuleName')]"
-                    },
-                    "workspaceResourceId": {
-                        "value": "[parameters('workspaceResourceId')]"
-                    },
-                    "subscriptionId": {
-                        "value": "[variables('subscriptionId')]"
-                    },
-                    "resourceGroupName": {
-                        "value": "[variables('resourceGroupName')]"
-                    },
-                    "workspaceName": {
-                        "value": "[variables('workspaceName')]"
                     }
                 },
                 "template": {
@@ -86,27 +58,12 @@
                     "parameters": {
                         "workspaceRegion": {
                             "type": "string"
-                        },
-                        "dataCollectionRuleName": {
-                            "type": "string"
-                        },
-                        "workspaceResourceId": {
-                            "type": "string"
-                        },
-                        "subscriptionId": {
-                            "type": "string"
-                        },
-                        "resourceGroupName": {
-                            "type": "string"
-                        },
-                        "workspaceName": {
-                            "type": "string"
                         }
                     },
                     "resources": [
                         {
-                            "type": "microsoft.insights/dataCollectionRules",
-                            "apiVersion": "2023-03-11",
+                            "type": "Microsoft.Insights/dataCollectionRules",
+                            "apiVersion": "2021-04-01",
                             "name": "[parameters('dataCollectionRuleName')]",
                             "location": "[parameters('workspaceRegion')]",
                             "properties": {
@@ -244,27 +201,26 @@
                                             ],
                                             "extensionName": "ChangeTracking-Linux",
                                             "extensionSettings": {
-                                                "enableFiles": false,
-                                                "enableSoftware": false,
+                                                "enableFiles": true,
+                                                "enableSoftware": true,
                                                 "enableRegistry": false,
-                                                "enableServices": false,
-                                                "enableInventory": false,
+                                                "enableServices": true,
+                                                "enableInventory": true,
                                                 "fileSettings": {
                                                     "fileCollectionFrequency": 900,
                                                     "fileInfo": [
                                                         {
                                                             "name": "ChangeTrackingLinuxPath_default",
-                                                            "description": "",
+                                                            "enabled": true,
                                                             "destinationPath": "/etc/.*.conf",
-                                                            "pathType": "File",
-                                                            "recurse": true,
-                                                            "links": "Follow",
-                                                            "uploadContent": false,
-                                                            "maxOutputSize": 500000,
-                                                            "groupTag": "Recommended",
-                                                            "maxContentsReturnable": 5000000,
                                                             "useSudo": true,
-                                                            "enabled": false
+                                                            "recurse": true,
+                                                            "maxContentsReturnable": 5000000,
+                                                            "pathType": "File",
+                                                            "type": "File",
+                                                            "links": "Follow",
+                                                            "maxOutputSize": 500000,
+                                                            "groupTag": "Recommended"
                                                         }
                                                     ]
                                                 },
@@ -302,6 +258,22 @@
                                         ]
                                     }
                                 ]
+                            }
+                        },
+                        {
+                            "type": "Microsoft.OperationsManagement/solutions",
+                            "name": "[Concat('ChangeTracking', '(', variables('workspaceName'), ')')]",
+                            "location": "[[parameters('workspaceRegion')]",
+                            "apiVersion": "2015-11-01-preview",
+                            "id": "[Concat('/subscriptions/', variables('subscriptionId'), '/resourceGroups/', variables('resourceGroupName'), '/providers/Microsoft.OperationsManagement/solutions/ChangeTracking', '(', variables('workspaceName'), ')')]",
+                            "properties": {
+                                "workspaceResourceId": "[parameters('workspaceResourceId')]"
+                            },
+                            "plan": {
+                                "name": "[Concat('ChangeTracking', '(', variables('workspaceName'), ')')]",
+                                "product": "OMSGallery/ChangeTracking",
+                                "promotionCode": "",
+                                "publisher": "Microsoft"
                             }
                         }
                     ]
