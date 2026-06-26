@@ -50,22 +50,23 @@ $wuaJob = Start-Job -ScriptBlock {
 
         if ($totalCount -gt 0) {
             # Fetch the 100 most-recent entries (newest-first).
-            # Match only updates whose title contains 'for Windows <OS>' — the phrase
-            # present in every genuine OS quality update per Microsoft's naming convention
-            # (cumulative, security, servicing stack, .NET framework updates, etc.).
+            # Match only updates whose title contains an OS update phrase.
+            #
+            # Two naming conventions are in use:
+            #   Old: 'for Windows Server 2016/2019/2022/2025' or 'for Windows 10/11'
+            #   New: 'for Microsoft server operating system version 21H2' (Windows Server 2022+)
+            #
+            # Both are matched by:
+            #   for (?:Windows (?:Server|\d)|Microsoft server operating system)
             #
             # The YYYY-MM date prefix is intentionally NOT used as a match criterion:
-            # Microsoft now applies that prefix to non-OS component updates as well
-            # (e.g. 'Windows ML OpenVINO Update'), so it is no longer a reliable
-            # indicator of an OS-level patch.
+            # Microsoft applies that prefix to non-OS updates as well (e.g. Defender
+            # platform updates), so it is no longer a reliable indicator of an OS patch.
             #
-            # Pattern:  for Windows (?:Server|\d)
-            #   'Server' — covers Windows Server 2016/2019/2022/2025
-            #   '\d'     — covers Windows 10/11 (version number starts with a digit)
-            # Intentionally excludes 'for Windows Defender' because 'Defender' starts
-            # with neither 'Server' nor a digit.
+            # Intentionally excludes 'for Microsoft Defender' and
+            # 'for Windows Defender' — neither 'Defender' token matches the alternation.
             $history        = $searcher.QueryHistory(0, [Math]::Min($totalCount, 100))
-            $includePattern = 'for Windows (?:Server|\d)'
+            $includePattern = 'for (?:Windows (?:Server|\d)|Microsoft server operating system)'
             $latestUpdate   = $history |
                 Where-Object { $_.ResultCode -eq 2 -and $_.Title -match $includePattern } |
                 Sort-Object Date -Descending |

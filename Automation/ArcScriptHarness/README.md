@@ -33,7 +33,7 @@ For a lighter-weight, fire-and-forget alternative, see [`ArcCommand.ps1`](../REA
 
 Executes a local PowerShell script against Azure Arc-enabled Windows servers with full lifecycle management. Key features:
 
-- **Multi-RG and tag-based targeting** — scope runs by resource group, tag key/value pairs, or both
+- **Flexible targeting** — scope runs by resource group, tag key/value pairs, an explicit FQDN list, or any combination of the three
 - **Parallel batch submission** — all machines within each batch are submitted concurrently (`ForEach-Object -Parallel`); `BatchSize` controls the ARM write throttle limit
 - **Automatic retry** with exponential back-off on HTTP 429 (rate-limit) responses
 - **Polling loop** — waits for every machine to reach a terminal state before continuing; polling calls are also parallelised
@@ -50,6 +50,7 @@ Executes a local PowerShell script against Azure Arc-enabled Windows servers wit
 | `OutputMarkdownPath` | `string` | | `.\ArcDiagResults_<timestamp>.md` | Path to write the Markdown results report |
 | `ResourceGroupNames` | `string[]` | | *(all RGs)* | One or more resource group names to restrict targets. If omitted, all connected Windows Arc machines in the subscription are targeted |
 | `FilterTags` | `hashtable` | | *(none)* | Tag key/value pairs that machines must **all** carry to be targeted (AND logic). Example: `@{ Environment = 'Prod'; Team = 'Ops' }` |
+| `FilterFQDNs` | `string[]` | | *(none)* | Explicit list of FQDNs to target (case-insensitive). Machines not in the list are excluded. Useful for re-running against machines that failed or timed out in a previous pass without re-processing machines that already succeeded. Example: `'server01.contoso.com','server02.contoso.com'` |
 | `BatchSize` | `int` | | `10` | Machines per batch. Also controls the `ThrottleLimit` for concurrent ARM writes within each batch. Range: 1–50 |
 | `BatchDelaySeconds` | `int` | | `2` | Seconds to pause between batches to stay within ARM write rate limits. Range: 0–60 |
 | `TimeoutSeconds` | `int` | | `600` | Per-machine timeout in seconds before marking a machine as timed out. Range: 30–3600 |
@@ -61,7 +62,7 @@ Executes a local PowerShell script against Azure Arc-enabled Windows servers wit
 | Phase | Description |
 |---|---|
 | **1 — Validation & Setup** | Validates the script path, checks Az.ConnectedMachine version, authenticates to Azure |
-| **2 — Machine Discovery** | Queries all Arc machines in the subscription; applies Connected/Windows, RG, and tag filters |
+| **2 — Machine Discovery** | Queries all Arc machines in the subscription; applies Connected/Windows, RG, tag, and FQDN filters |
 | **3 — Batch Submission** | Splits targets into batches; submits all machines in each batch in parallel |
 | **4 — Poll for Completion** | Polls all pending machines concurrently each round until every machine reaches a terminal state |
 | **5 — Cleanup** | Deletes Run Command ARM resources from all targeted machines in parallel (unless `-SkipCleanup`) |
@@ -102,6 +103,14 @@ Executes a local PowerShell script against Azure Arc-enabled Windows servers wit
     -BatchDelaySeconds     5 `
     -TimeoutSeconds        900 `
     -OutputMarkdownPath    'C:\Reports\Results.md'
+```
+
+**Target specific machines by FQDN (e.g. re-run against machines that failed or timed out):**
+```powershell
+.\ArcScriptHarness.ps1 `
+    -DiagnosticScriptPath .\ArcPatchLevel.ps1 `
+    -SubscriptionId       'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx' `
+    -FilterFQDNs          'server01.contoso.com', 'server02.contoso.com'
 ```
 
 **Skip cleanup to inspect Run Command resources in the Azure portal:**
@@ -156,13 +165,19 @@ A ready-to-use diagnostic script for `ArcScriptHarness.ps1` that collects the fo
 | Latest OS update KB number | Parsed from WUA title |
 | Latest OS update install date | WUA `QueryHistory` |
 
-Only updates whose title contains `for Windows <OS>` are considered — the phrase present in every genuine OS quality update (cumulative, security, servicing stack, .NET framework, etc.) per Microsoft's official naming convention.
+Only updates that match an OS update phrase are considered. Microsoft uses two naming conventions:
 
-The `YYYY-MM` date prefix is intentionally **not** used as a match criterion: Microsoft now applies that prefix to non-OS component updates as well (e.g. Windows ML platform updates), making it an unreliable indicator of an OS-level patch.
+- **Old:** `... for Windows Server 2016/2019/2022/2025` or `... for Windows 10/11`
+- **New (Windows Server 2022+):** `... for Microsoft server operating system version 21H2`
+
+Both are matched by the pattern `for (?:Windows (?:Server|\d)|Microsoft server operating system)`. The `YYYY-MM` date prefix is intentionally **not** used as a match criterion — Microsoft now applies it to non-OS updates (e.g. Defender platform updates) as well, making it an unreliable indicator.
 
 | Pattern | Matches | Excluded by |
 |---|---|---|
-| `for Windows (?:Server\|\d)` | `for Windows Server 2016/2019/2022/2025`, `for Windows 10`, `for Windows 11` | Anything else, including `for Windows Defender` (`Defender` starts with neither `Server` nor a digit) |
+| `for Windows (?:Server\|\d)` | `for Windows Server 2016/2019/2022/2025`, `for Windows 10`, `for Windows 11` | Anything else |
+| `for Microsoft server operating system` | `for Microsoft server operating system version 21H2` (new naming for Windows Server 2022+) | Anything else |
+
+Combined, these exclude `for Windows Defender` and `for Microsoft Defender` — neither `Defender` token matches either branch of the alternation.
 
 ### WUA Fallback
 
@@ -181,9 +196,9 @@ Domain            : contoso.com
 IP Address(es)    : 10.0.1.42, 10.0.1.43
 
 --- Latest OS Update ---
-Display Name      : 2025-11 Cumulative Update for Windows Server 2022 (KB5046613)
-KB Version        : KB5046613
-Install Date      : 2025-11-12
+Display Name      : 2026-06 Cumulative Update for Microsoft server operating system version 21H2 for x64-based Systems (KB5063060)
+KB Version        : KB5063060
+Install Date      : 2026-06-11
 ```
 
 ### Usage

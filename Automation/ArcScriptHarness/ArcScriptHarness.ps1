@@ -42,6 +42,14 @@
     (AND logic) to be targeted.
     Example: @{ Environment = 'Prod'; Team = 'Ops' }
 
+.PARAMETER FilterFQDNs
+    Optional. An array of fully qualified domain names (FQDNs). When specified, only
+    machines whose FQDN matches an entry in this list (case-insensitive) are targeted.
+    Useful for re-running the harness against a specific subset of machines — for example,
+    machines that were unresponsive or returned errors in a previous pass — without
+    reprocessing all machines that already succeeded.
+    Example: 'server01.contoso.com','server02.contoso.com'
+
 .PARAMETER BatchSize
     Number of machines to submit per batch. Default: 10. Also controls the ThrottleLimit
     for concurrent ARM write operations within each batch (all machines in a batch are
@@ -81,6 +89,13 @@
         -SubscriptionId       'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx' `
         -SkipCleanup
 
+.EXAMPLE
+    # Re-run against only the machines that failed or timed out in a previous pass
+    .\ArcScriptHarness.ps1 `
+        -DiagnosticScriptPath .\Get-DiskHealth.ps1 `
+        -SubscriptionId       'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx' `
+        -FilterFQDNs          'server01.contoso.com','server02.contoso.com'
+
 .NOTES
     Run command name format: ArcDiag-yyyyMMddHHmmss (22 chars, within the 36-char API limit).
     Re-running the harness within the same second against the same machines will cause a name
@@ -116,6 +131,9 @@ param (
 
     [Parameter()]
     [hashtable] $FilterTags,
+
+    [Parameter()]
+    [string[]] $FilterFQDNs,
 
     [Parameter()]
     [ValidateRange(1, 50)]
@@ -154,6 +172,16 @@ function Get-MachineTags {
     if ($Machine.PSObject.Properties['Tags'] -and $null -ne $Machine.Tags) { return $Machine.Tags }
     if ($Machine.PSObject.Properties['Tag']  -and $null -ne $Machine.Tag)  { return $Machine.Tag  }
     return @{}
+}
+
+function Get-MachineFQDN {
+    # The FQDN property name varies across Az.ConnectedMachine SDK versions.
+    # Falls back to the short machine name if no FQDN property is present.
+    param($Machine)
+    if ($Machine.PSObject.Properties['FQDN']     -and $null -ne $Machine.FQDN)     { return $Machine.FQDN     }
+    if ($Machine.PSObject.Properties['DNSFqdn']  -and $null -ne $Machine.DNSFqdn)  { return $Machine.DNSFqdn  }
+    if ($Machine.PSObject.Properties['DnsFqdn']  -and $null -ne $Machine.DnsFqdn)  { return $Machine.DnsFqdn  }
+    return $Machine.Name
 }
 
 # Unique key for a machine that is stable even when two RGs share a machine name
@@ -260,6 +288,15 @@ if ($FilterTags -and $FilterTags.Count -gt 0) {
     }
     $tagDesc = ($FilterTags.GetEnumerator() | ForEach-Object { "$($_.Key)=$($_.Value)" }) -join ', '
     Write-Status "Tag filter         : $tagDesc"
+}
+
+# FQDN filter — only include machines whose FQDN is in the supplied list
+if ($FilterFQDNs -and $FilterFQDNs.Count -gt 0) {
+    $fqdnLower  = $FilterFQDNs | ForEach-Object { $_.ToLower() }
+    $candidates = $candidates | Where-Object {
+        (Get-MachineFQDN -Machine $_).ToLower() -in $fqdnLower
+    }
+    Write-Status "FQDN filter        : $($FilterFQDNs -join ', ')"
 }
 
 $targetMachines = @($candidates)
@@ -638,6 +675,9 @@ if ($ResourceGroupNames -and $ResourceGroupNames.Count -gt 0) {
 if ($FilterTags -and $FilterTags.Count -gt 0) {
     $tagStr = ($FilterTags.GetEnumerator() | ForEach-Object { "$($_.Key)=$($_.Value)" }) -join ', '
     $reportLines.Add("| **Tag Filter** | $tagStr |")
+}
+if ($FilterFQDNs -and $FilterFQDNs.Count -gt 0) {
+    $reportLines.Add("| **FQDN Filter** | $($FilterFQDNs -join ', ') |")
 }
 $reportLines.Add("| **Cleanup** | $(if ($SkipCleanup) { 'Skipped — ARM resources retained' } else { 'Completed' }) |")
 $reportLines.Add('')
