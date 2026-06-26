@@ -12,6 +12,7 @@ For a lighter-weight, fire-and-forget alternative, see [`ArcCommand.ps1`](../REA
 |---|---|
 | [`ArcScriptHarness.ps1`](#arcscriptharnessps1) | The harness — handles targeting, parallel submission, polling, retry, and reporting |
 | [`ArcPatchLevel.ps1`](#arcpatchlevelps1) | Sample diagnostic script — collects patch level, domain, and IP info from each machine |
+| [`ArcMachineHealth.ps1`](#arcmachinehealthps1) | Sample diagnostic script — comprehensive health snapshot: system info, .NET, CPU, memory, disk, network, and recent events |
 
 ---
 
@@ -33,7 +34,7 @@ For a lighter-weight, fire-and-forget alternative, see [`ArcCommand.ps1`](../REA
 
 Executes a local PowerShell script against Azure Arc-enabled Windows servers with full lifecycle management. Key features:
 
-- **Flexible targeting** — scope runs by resource group, tag key/value pairs, an explicit FQDN list, or any combination of the three
+- **Flexible targeting** — scope runs by resource group, tag key/value pairs, an explicit machine name/FQDN list, or any combination of the three
 - **Parallel batch submission** — all machines within each batch are submitted concurrently (`ForEach-Object -Parallel`); `BatchSize` controls the ARM write throttle limit
 - **Automatic retry** with exponential back-off on HTTP 429 (rate-limit) responses
 - **Polling loop** — waits for every machine to reach a terminal state before continuing; polling calls are also parallelised
@@ -52,6 +53,7 @@ Executes a local PowerShell script against Azure Arc-enabled Windows servers wit
 | `ResourceGroupNames` | `string[]` | | *(all RGs)* | One or more resource group names to restrict targets. If omitted, all connected Windows Arc machines in the subscription are targeted |
 | `FilterTags` | `hashtable` | | *(none)* | Tag key/value pairs that machines must **all** carry to be targeted (AND logic). Example: `@{ Environment = 'Prod'; Team = 'Ops' }` |
 | `FilterFQDNs` | `string[]` | | *(none)* | Explicit list of FQDNs to target (case-insensitive). Machines not in the list are excluded. Useful for re-running against machines that failed or timed out in a previous pass without re-processing machines that already succeeded. Example: `'server01.contoso.com','server02.contoso.com'` |
+| `MachineName` | `string[]` | | *(none)* | One or more machine names to target. Each entry is matched against the machine's short name (e.g. `SERVER01`) **and** its FQDN — either form works in the same list. Applied in addition to any other active filters. Example: `'SERVER01','server02.contoso.com'` |
 | `BatchSize` | `int` | | `10` | Machines per batch. Also controls the `ThrottleLimit` for concurrent ARM writes within each batch. Range: 1–50 |
 | `BatchDelaySeconds` | `int` | | `2` | Seconds to pause between batches to stay within ARM write rate limits. Range: 0–60 |
 | `TimeoutSeconds` | `int` | | `600` | Per-machine timeout in seconds before marking a machine as timed out. Range: 30–3600 |
@@ -63,7 +65,7 @@ Executes a local PowerShell script against Azure Arc-enabled Windows servers wit
 | Phase | Description |
 |---|---|
 | **1 — Validation & Setup** | Validates the script path, checks Az.ConnectedMachine version, authenticates to Azure |
-| **2 — Machine Discovery** | Queries all Arc machines in the subscription; applies Connected/Windows, RG, tag, and FQDN filters |
+| **2 — Machine Discovery** | Queries all Arc machines in the subscription; applies Connected/Windows, RG, tag, FQDN, and machine name filters |
 | **3 — Batch Submission** | Splits targets into batches; submits all machines in each batch in parallel |
 | **4 — Poll for Completion** | Polls all pending machines concurrently each round until every machine reaches a terminal state |
 | **5 — Cleanup** | Deletes Run Command ARM resources from targeted machines in parallel. Only runs when `-Cleanup` is specified; by default resources are retained for reuse |
@@ -112,6 +114,22 @@ Executes a local PowerShell script against Azure Arc-enabled Windows servers wit
     -DiagnosticScriptPath .\ArcPatchLevel.ps1 `
     -SubscriptionId       'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx' `
     -FilterFQDNs          'server01.contoso.com', 'server02.contoso.com'
+```
+
+**Target a single machine by name:**
+```powershell
+.\ArcScriptHarness.ps1 `
+    -DiagnosticScriptPath .\ArcMachineHealth.ps1 `
+    -SubscriptionId       'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx' `
+    -MachineName          'SERVER01'
+```
+
+**Target multiple machines — short names and FQDNs can be mixed:**
+```powershell
+.\ArcScriptHarness.ps1 `
+    -DiagnosticScriptPath .\ArcMachineHealth.ps1 `
+    -SubscriptionId       'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx' `
+    -MachineName          'SERVER01', 'server02.contoso.com', 'SERVER03'
 ```
 
 **Force cleanup of Run Command ARM resources after collection:**
@@ -219,4 +237,118 @@ KB5052000     2026-02-11   Success    2026-02 Cumulative Update for Microsoft se
 **Locally for testing (runs against the current machine):**
 ```powershell
 .\ArcPatchLevel.ps1
+```
+
+---
+
+## ArcMachineHealth.ps1
+
+### Purpose
+
+A comprehensive health snapshot diagnostic for `ArcScriptHarness.ps1`. Collects the following from each Arc-enabled Windows machine:
+
+| Data | Source |
+|---|---|
+| Machine name, logon domain, OS version and build | `$env:COMPUTERNAME`, WMI `Win32_ComputerSystem`, WMI `Win32_OperatingSystem` |
+| .NET Framework versions installed (1.x – 4.8.1) | Registry `HKLM:\SOFTWARE\Microsoft\NET Framework Setup\NDP` |
+| CPU model, architecture, physical/logical cores, clock speed, total usage | WMI `Win32_Processor` |
+| Total, free, used RAM and % free | WMI `Win32_OperatingSystem` |
+| Top 20 processes by working set (name, PID, MB) | `Get-Process` |
+| Automatic-start services not currently running | `Get-Service` |
+| Fixed disk volumes: label, % used, free space, total size | WMI `Win32_LogicalDisk` (DriveType=3) |
+| IP-enabled network adapters (Physical/Virtual): IPv4, MAC, network name | WMI `Win32_NetworkAdapterConfiguration`, `Win32_NetworkAdapter`, `Get-NetConnectionProfile` |
+| Last 20 Critical (Level 1) and Warning (Level 3) events — System log | `Get-WinEvent` with XPath filter |
+| Last 20 Critical (Level 1) and Warning (Level 3) events — Application log | `Get-WinEvent` with XPath filter |
+| Total script run time | `Get-Date` delta |
+
+> **Output size:** This script routinely produces 6–10 KB of output per machine, which exceeds the 4 KB inline Run Command limit on complex machines. `ArcScriptHarness.ps1` flags truncation automatically in the report.
+
+### Requirements
+
+- PowerShell 5.1 or later (executes on the Arc agent)
+- No external modules required
+
+### Sample Output
+
+```
+=== Arc Machine Health Diagnostic ===
+Script Version    : 1.0.0
+Run Started       : 2026-06-26 09:15:00
+
+--- System Information ---
+Machine Name      : SERVER01
+Logon Domain      : contoso.com
+OS Version        : Windows Server 2022 Datacenter (Build 20348)
+
+--- .NET Framework Versions ---
+  .NET Framework 3.5
+  .NET Framework 4.8.1
+
+--- CPU ---
+Processor         : Intel(R) Xeon(R) Gold 6154 CPU @ 3.00GHz
+Architecture      : x64
+Cores             : 8
+Logical Processors: 16
+Max Clock Speed   : 3000 MHz
+Total CPU Usage   : 12%
+
+--- Memory ---
+Total RAM         : 32768 MB (32.0 GB)
+Free RAM          : 24576 MB (24.0 GB)
+Used RAM          : 8192 MB (8.0 GB)
+% Free RAM        : 75.0%
+
+Top 20 Processes by Working Set:
+Name                           PID    WS (MB)
+------------------------------  ------  ----------
+svchost                         1234       512.3
+w3wp                            5678       384.1
+...
+
+Auto-Start Services Currently Not Running:
+Service Name                        Status           Display Name
+-----------------------------------  ---------------  --------------------------------------------------
+wuauserv                            Stopped          Windows Update
+
+--- Disk Volumes (Fixed) ---
+Drive  Label                Used%       Free          Total
+-----  --------------------  -------  ------------  ------------
+C:     Windows               45.2%      54.3 GB        99.0 GB
+D:     Data                  28.1%     143.9 GB       200.0 GB
+
+--- Network Adapters (IP-Enabled) ---
+[Physical] Microsoft Hyper-V Network Adapter
+  IP Address(es) : 10.0.1.42
+  MAC Address    : 00-15-5D-AB-CD-EF
+  Network        : Contoso Corp Network
+
+--- Last 20 Critical/Warning Events (System Log) ---
+TimeCreated          Level     EventId  Source                        Message
+--------------------  --------  -------  ----------------------------  --------------------------------------------------
+2026-06-25 03:12:44  Warning      4226  Tcpip                         TCP/IP has reached the security limit...
+...
+
+=== Total Script Run Time: 4.2s ===
+```
+
+### Usage
+
+**Via the harness (recommended):**
+```powershell
+.\ArcScriptHarness.ps1 `
+    -DiagnosticScriptPath .\ArcMachineHealth.ps1 `
+    -SubscriptionId       'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx'
+```
+
+**Target a specific machine:**
+```powershell
+.\ArcScriptHarness.ps1 `
+    -DiagnosticScriptPath .\ArcMachineHealth.ps1 `
+    -SubscriptionId       'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx' `
+    -MachineName          'SERVER01'
+```
+
+**Locally for testing (runs against the current machine):**
+```powershell
+.\ArcMachineHealth.ps1
 ```

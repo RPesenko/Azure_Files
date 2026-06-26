@@ -50,6 +50,13 @@
     reprocessing all machines that already succeeded.
     Example: 'server01.contoso.com','server02.contoso.com'
 
+.PARAMETER MachineName
+    Optional. One or more machine names to target. Each entry is matched case-insensitively
+    against the machine's short name (e.g. 'SERVER01') and its FQDN
+    (e.g. 'server01.contoso.com'). Either form is accepted in the same list.
+    Applied in addition to any ResourceGroupNames, FilterTags, and FilterFQDNs filters.
+    Example: 'SERVER01','server02.contoso.com'
+
 .PARAMETER BatchSize
     Number of machines to submit per batch. Default: 10. Also controls the ThrottleLimit
     for concurrent ARM write operations within each batch (all machines in a batch are
@@ -98,6 +105,20 @@
         -SubscriptionId       'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx' `
         -FilterFQDNs          'server01.contoso.com','server02.contoso.com'
 
+.EXAMPLE
+    # Target a single machine by name
+    .\ArcScriptHarness.ps1 `
+        -DiagnosticScriptPath .\ArcPatchLevel.ps1 `
+        -SubscriptionId       'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx' `
+        -MachineName          'SERVER01'
+
+.EXAMPLE
+    # Target multiple machines — mix of short names and FQDNs accepted
+    .\ArcScriptHarness.ps1 `
+        -DiagnosticScriptPath .\ArcMachineHealth.ps1 `
+        -SubscriptionId       'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx' `
+        -MachineName          'SERVER01','server02.contoso.com','SERVER03'
+
 .NOTES
     Version: 1.0.0
 
@@ -141,6 +162,9 @@ param (
 
     [Parameter()]
     [string[]] $FilterFQDNs,
+
+    [Parameter()]
+    [string[]] $MachineName,
 
     [Parameter()]
     [ValidateRange(1, 50)]
@@ -327,6 +351,17 @@ if ($FilterFQDNs -and $FilterFQDNs.Count -gt 0) {
         (Get-MachineFQDN -Machine $_).ToLower() -in $fqdnLower
     }
     Write-Status "FQDN filter        : $($FilterFQDNs -join ', ')"
+}
+
+# Machine name filter — matches by short name OR FQDN (case-insensitive)
+# Accepts bare hostnames ('SERVER01'), FQDNs ('server01.contoso.com'), or a mix
+if ($MachineName -and $MachineName.Count -gt 0) {
+    $namesLower = $MachineName | ForEach-Object { $_.ToLower() }
+    $candidates = $candidates | Where-Object {
+        $_.Name.ToLower() -in $namesLower -or
+        (Get-MachineFQDN -Machine $_).ToLower() -in $namesLower
+    }
+    Write-Status "Machine filter     : $($MachineName -join ', ')"
 }
 
 $targetMachines = @($candidates)
@@ -747,6 +782,9 @@ if ($FilterTags -and $FilterTags.Count -gt 0) {
 }
 if ($FilterFQDNs -and $FilterFQDNs.Count -gt 0) {
     $reportLines.Add("| **FQDN Filter** | $($FilterFQDNs -join ', ') |")
+}
+if ($MachineName -and $MachineName.Count -gt 0) {
+    $reportLines.Add("| **Machine Filter** | $($MachineName -join ', ') |")
 }
 $reportLines.Add("| **Cleanup** | $(if ($Cleanup) { 'Completed' } else { 'Skipped - ARM resources retained for reuse' }) |")
 $reportLines.Add('')
