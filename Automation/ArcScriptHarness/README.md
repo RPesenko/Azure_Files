@@ -38,7 +38,8 @@ Executes a local PowerShell script against Azure Arc-enabled Windows servers wit
 - **Automatic retry** with exponential back-off on HTTP 429 (rate-limit) responses
 - **Polling loop** — waits for every machine to reach a terminal state before continuing; polling calls are also parallelised
 - **Markdown report** — full per-machine stdout/stderr, exit codes, durations, and a summary table written to a single `.md` file
-- **Automatic cleanup** — Run Command ARM resources are deleted in parallel after results are collected (suppressible with `-SkipCleanup`)
+- **Smart reuse** — Run Command ARM resources are retained by default and reused on subsequent runs. A SHA-256 script hash is compared on each run: `Create` for new resources, `ReRun` when the script is unchanged, `Update` when the script has changed
+- **Optional cleanup** — Pass `-Cleanup` to delete Run Command resources after collection
 - **Script wrapping** — the diagnostic script is automatically wrapped in a `try/catch`; no modifications to your script are required
 
 ### Parameters
@@ -55,7 +56,7 @@ Executes a local PowerShell script against Azure Arc-enabled Windows servers wit
 | `BatchDelaySeconds` | `int` | | `2` | Seconds to pause between batches to stay within ARM write rate limits. Range: 0–60 |
 | `TimeoutSeconds` | `int` | | `600` | Per-machine timeout in seconds before marking a machine as timed out. Range: 30–3600 |
 | `PollIntervalSeconds` | `int` | | `15` | Seconds between polling rounds. Range: 5–300 |
-| `SkipCleanup` | `switch` | | `$false` | When set, Run Command ARM resources are **not** deleted after collection. Useful for portal inspection or troubleshooting |
+| `Cleanup` | `switch` | | `$false` | When set, Run Command ARM resources are deleted after collection. By default resources are retained and reused on subsequent runs |
 
 ### Execution Phases
 
@@ -65,7 +66,7 @@ Executes a local PowerShell script against Azure Arc-enabled Windows servers wit
 | **2 — Machine Discovery** | Queries all Arc machines in the subscription; applies Connected/Windows, RG, tag, and FQDN filters |
 | **3 — Batch Submission** | Splits targets into batches; submits all machines in each batch in parallel |
 | **4 — Poll for Completion** | Polls all pending machines concurrently each round until every machine reaches a terminal state |
-| **5 — Cleanup** | Deletes Run Command ARM resources from all targeted machines in parallel (unless `-SkipCleanup`) |
+| **5 — Cleanup** | Deletes Run Command ARM resources from targeted machines in parallel. Only runs when `-Cleanup` is specified; by default resources are retained for reuse |
 | **6 — Markdown Report** | Writes a formatted report with summary statistics, per-machine output, and skipped machines |
 
 ### Usage Examples
@@ -113,12 +114,12 @@ Executes a local PowerShell script against Azure Arc-enabled Windows servers wit
     -FilterFQDNs          'server01.contoso.com', 'server02.contoso.com'
 ```
 
-**Skip cleanup to inspect Run Command resources in the Azure portal:**
+**Force cleanup of Run Command ARM resources after collection:**
 ```powershell
 .\ArcScriptHarness.ps1 `
     -DiagnosticScriptPath .\ArcPatchLevel.ps1 `
     -SubscriptionId       'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx' `
-    -SkipCleanup
+    -Cleanup
 ```
 
 ### Output — Markdown Report

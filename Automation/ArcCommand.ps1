@@ -1,4 +1,15 @@
 #Requires -Version 7.0
+<#
+.SYNOPSIS
+    Fire-and-forget parallel Arc Run Command dispatcher.
+    Submits a local PowerShell script to all connected Windows Arc machines in a
+    resource group via the Azure Connected Machine Run Command API using
+    AsyncExecution and exports a submission summary to CSV.
+
+.NOTES
+    Version: 1.0.0
+#>
+$Version = '1.0.0'
 $ErrorActionPreference = "Stop"
 
 $scriptPath = "C:\Temp\test.ps1" ## Update with your diagnostic script path

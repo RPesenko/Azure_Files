@@ -5,9 +5,13 @@
     Results are output as a table showing KB number, install date, result code, and title.
     Defender definition updates, security intelligence updates, and other
     non-OS component updates are excluded from the result.
-    Designed to run via ArcScriptHarness.ps1. No modification needed — the harness
+    Designed to run via ArcScriptHarness.ps1. No modification needed - the harness
     wraps this script in a try/catch automatically.
+
+.NOTES
+    Version: 1.0.0
 #>
+$script:Version = '1.0.0'
 
 # ── Machine name ──────────────────────────────────────────────────────────────
 $machineName = $env:COMPUTERNAME
@@ -135,6 +139,7 @@ Remove-Job -Job $wuaJob -Force
 
 # ── Output ────────────────────────────────────────────────────────────────────
 Write-Output "=== Arc Patch Level Diagnostic ==="
+Write-Output "Script Version    : $($script:Version)"
 Write-Output "Machine Name      : $machineName"
 Write-Output "Domain            : $domain"
 Write-Output "IP Address(es)    : $ipDisplay"

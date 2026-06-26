@@ -65,9 +65,10 @@
 .PARAMETER PollIntervalSeconds
     Seconds to wait between polling rounds. Default: 15.
 
-.PARAMETER SkipCleanup
-    When specified, Run Command ARM resources created on each machine are not deleted
-    after results are collected. Useful for auditing or troubleshooting in the portal.
+.PARAMETER Cleanup
+    When specified, Run Command ARM resources are deleted from each machine after results
+    are collected. By default, resources are retained and reused on subsequent runs,
+    which avoids the create/delete overhead and enables version-aware re-execution.
 
 .EXAMPLE
     .\ArcScriptHarness.ps1 `
@@ -84,10 +85,11 @@
         -TimeoutSeconds        300
 
 .EXAMPLE
+    # Force removal of Run Command ARM resources after collection
     .\ArcScriptHarness.ps1 `
         -DiagnosticScriptPath .\Collect-EventLogs.ps1 `
         -SubscriptionId       'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx' `
-        -SkipCleanup
+        -Cleanup
 
 .EXAMPLE
     # Re-run against only the machines that failed or timed out in a previous pass
@@ -97,9 +99,14 @@
         -FilterFQDNs          'server01.contoso.com','server02.contoso.com'
 
 .NOTES
-    Run command name format: ArcDiag-yyyyMMddHHmmss (22 chars, within the 36-char API limit).
-    Re-running the harness within the same second against the same machines will cause a name
-    collision. In normal use this cannot occur.
+    Version: 1.0.0
+
+    Run command name format: ArcDiag-<ScriptBaseName> - stable across runs (max 36 chars).
+    The Run Command ARM resource is created on first use and reused on subsequent runs:
+      Create - no existing resource found; created fresh.
+      ReRun  - resource exists and script hash matches; re-executed unchanged.
+      Update - resource exists but script content has changed; updated before execution.
+    Run Command resources are retained by default; pass -Cleanup to remove after collection.
 
     PARALLEL EXECUTION (PowerShell 7.2+ required)
     Within each batch all Run Command submissions are dispatched concurrently using
@@ -151,11 +158,12 @@ param (
     [ValidateRange(5, 300)]
     [int] $PollIntervalSeconds = 15,
 
-    [switch] $SkipCleanup
+    [switch] $Cleanup
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+$script:Version        = '1.0.0'
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Helpers
@@ -191,17 +199,38 @@ function Get-MachineKey { param($Machine) "$($Machine.ResourceGroupName)/$($Mach
 # PHASE 1 — Validation & Setup
 # ──────────────────────────────────────────────────────────────────────────────
 Write-Status '─── Phase 1: Validation & Setup ──────────────────────────────' 'White'
+Write-Status "Harness version    : v$($script:Version)"
 
 $script:HarnessStart   = Get-Date
 $script:RunTimestamp   = Get-Date -Format 'yyyyMMddHHmmss'
-$script:RunCommandName = "ArcDiag-$($script:RunTimestamp)"   # 22 chars — within the 36-char API limit
 
 # 1a. Resolve and read diagnostic script
 $DiagnosticScriptPath = (Resolve-Path -Path $DiagnosticScriptPath).Path
 $rawScript            = Get-Content -Path $DiagnosticScriptPath -Raw -Encoding UTF8
 
-# Wrap in try/catch so any diagnostic script surfaces errors cleanly without modification
+# Stable run command name derived from the script file name so the same ARM resource
+# is reused across runs.  Non-alphanumeric characters are replaced with hyphens;
+# name is truncated to fit within the 36-char API limit (9-char 'ArcDiag-' prefix leaves 27).
+$scriptBase            = [System.IO.Path]::GetFileNameWithoutExtension($DiagnosticScriptPath)
+$scriptBase            = ($scriptBase -replace '[^a-zA-Z0-9]', '-' -replace '-{2,}', '-').TrimEnd('-')
+$scriptBase            = $scriptBase.Substring(0, [Math]::Min($scriptBase.Length, 27))
+$script:RunCommandName = "ArcDiag-$scriptBase"
+
+# Compute a short SHA-256 hash of the raw script for change detection.
+# Compared against the hash embedded in any existing Run Command resource to decide
+# whether to Create, ReRun (same hash), or Update (different hash) the resource.
+$sha256            = [System.Security.Cryptography.SHA256]::Create()
+$hashBytes         = $sha256.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($rawScript))
+$script:ScriptHash = (($hashBytes | ForEach-Object { $_.ToString('x2') }) -join '').Substring(0, 8)
+$sha256.Dispose()
+
+# Wrap in try/catch so any diagnostic script surfaces errors cleanly without modification.
+# ArcHarness-ScriptHash  - stable per script content; used for version detection on reuse.
+# ArcHarness-RunTimestamp - changes every run, ensuring the agent always re-executes even
+#                           when the script content itself has not changed.
 $wrappedScript = @"
+# ArcHarness-ScriptHash: $($script:ScriptHash)
+# ArcHarness-RunTimestamp: $($script:RunTimestamp)
 try {
 $rawScript
 } catch {
@@ -212,6 +241,7 @@ $rawScript
 
 $scriptBytes = [System.Text.Encoding]::UTF8.GetByteCount($wrappedScript)
 Write-Status "Diagnostic script  : $DiagnosticScriptPath ($scriptBytes bytes)"
+Write-Status "Script hash        : $($script:ScriptHash)"
 
 # 1b. Default output path
 if (-not $OutputMarkdownPath) {
@@ -330,8 +360,9 @@ for ($i = 0; $i -lt $targetMachines.Count; $i += $BatchSize) {
     $batches.Add(@($targetMachines[$i..$end]))
 }
 
-# Capture script-scoped name into a plain variable for use in $using: scope
+# Capture script-scoped variables into plain variables for use in $using: scope
 $runCommandName = $script:RunCommandName
+$scriptHash     = $script:ScriptHash
 
 $batchNum = 0
 foreach ($batch in $batches) {
@@ -359,10 +390,37 @@ foreach ($batch in $batches) {
         $submitted   = $false
         $submittedAt = $null
         $errorMsg    = $null
+        $action      = 'Create'
         $warnings    = [System.Collections.Generic.List[string]]::new()
 
         # ForEach-Object -Parallel runs in a fresh runspace — re-establish the Az context
         $null = Set-AzContext -Context $using:azContext -ErrorAction SilentlyContinue
+
+        # Check for an existing Run Command resource and determine the action.
+        # ArcHarness-ScriptHash in the resource's SourceScript is compared to the current hash:
+        #   Create - no resource found.
+        #   ReRun  - resource found; hash matches; script unchanged.
+        #   Update - resource found; hash differs; script has changed.
+        try {
+            $existingCmd = Get-AzConnectedMachineRunCommand `
+                -SubscriptionId    $using:SubscriptionId `
+                -ResourceGroupName $machine.ResourceGroupName `
+                -MachineName       $machine.Name `
+                -RunCommandName    $using:runCommandName `
+                -ErrorAction       Stop
+
+            $existingHash = $null
+            if ($existingCmd.SourceScript) {
+                $firstLine = ($existingCmd.SourceScript -split '[\r\n]+')[0].Trim()
+                if ($firstLine -match '#\s*ArcHarness-ScriptHash:\s*([0-9a-f]+)') {
+                    $existingHash = $Matches[1]
+                }
+            }
+            $action = if ($existingHash -eq $using:scriptHash) { 'ReRun' } else { 'Update' }
+        } catch {
+            # Resource not found (404) or unavailable - will be created
+            $action = 'Create'
+        }
 
         while ($attempt -lt $maxRetries -and -not $submitted) {
             $attempt++
@@ -402,6 +460,7 @@ foreach ($batch in $batches) {
             ResourceGroup = $machine.ResourceGroupName
             Submitted     = $submitted
             SubmittedAt   = $submittedAt
+            Action        = $action
             Error         = $errorMsg
             Warnings      = $warnings.ToArray()
         }
@@ -414,7 +473,12 @@ foreach ($batch in $batches) {
         if ($sub.Submitted) {
             $machineState[$sub.MachineKey].SubmittedAt = $sub.SubmittedAt
             $machineState[$sub.MachineKey].Status      = 'Submitted'
-            Write-Status ("  [OK]  {0} ({1})" -f $sub.MachineName, $sub.ResourceGroup) 'Green'
+            $actionLabel = switch ($sub.Action) {
+                'ReRun'  { 'Re-run'  }
+                'Update' { 'Updated' }
+                default  { 'Created' }
+            }
+            Write-Status ("  [OK]  {0} ({1}) [{2}]" -f $sub.MachineName, $sub.ResourceGroup, $actionLabel) 'Green'
         } else {
             $machineState[$sub.MachineKey].Status = 'SubmissionError'
             Write-Status ("  [ERR] {0} — {1}" -f $sub.MachineName, $sub.Error) 'Red'
@@ -501,8 +565,12 @@ while ($pendingCount -gt 0) {
             $execState  = $runResult.InstanceViewExecutionState
 
             # A machine is done when ARM provisioning reached a terminal state AND
-            # the script is no longer actively running on the agent
-            $isTerminal = ($provState -in $using:terminalProvStates) -and ($execState -ne 'Running')
+            # the script is no longer actively running on the agent AND
+            # the execution end time is after our submission (guards against briefly
+            # seeing the terminal state of a previous run immediately after a re-submit).
+            $execEndTime  = if ($runResult.PSObject.Properties['InstanceViewEndTime']) { $runResult.InstanceViewEndTime } else { $null }
+            $isCurrentRun = (-not $execEndTime) -or ($execEndTime -gt $item.SubmittedAt)
+            $isTerminal   = $isCurrentRun -and ($provState -in $using:terminalProvStates) -and ($execState -ne 'Running')
 
             if ($isTerminal) {
                 $exitCode = $runResult.InstanceViewExitCode
@@ -594,7 +662,7 @@ Write-Status 'All machines have reached a terminal state.'
 # ──────────────────────────────────────────────────────────────────────────────
 # PHASE 5 — Cleanup
 # ──────────────────────────────────────────────────────────────────────────────
-if (-not $SkipCleanup) {
+if ($Cleanup) {
     Write-Status '─── Phase 5: Cleanup ─────────────────────────────────────────' 'White'
 
     # Collect machines for which a run command ARM resource was actually created
@@ -631,9 +699,9 @@ if (-not $SkipCleanup) {
     }
     Write-Status "Removed $cleanedCount run command resource(s). $cleanErrCount removal error(s)."
 } else {
-    Write-Status '─── Phase 5: Cleanup skipped (-SkipCleanup) ─────────────────' 'DarkGray'
-    Write-Status "Run command resources are retained under name: $($script:RunCommandName)" 'DarkGray'
-    Write-Status 'To remove manually: Remove-AzConnectedMachineRunCommand -RunCommandName <name>' 'DarkGray'
+    Write-Status '─── Phase 5: Resources retained (pass -Cleanup to remove) ───' 'DarkGray'
+    Write-Status "Run command name  : $($script:RunCommandName) (retained on each machine)" 'DarkGray'
+    Write-Status "To remove: Remove-AzConnectedMachineRunCommand -RunCommandName '$($script:RunCommandName)'" 'DarkGray'
 }
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -664,6 +732,7 @@ $reportLines.Add('')
 $reportLines.Add('| Field | Value |')
 $reportLines.Add('|---|---|')
 $reportLines.Add("| **Diagnostic Script** | ``$scriptName`` |")
+$reportLines.Add("| **Harness Version** | ``$($script:Version)`` |")
 $reportLines.Add("| **Run Timestamp** | $($script:HarnessStart.ToString('yyyy-MM-dd HH:mm:ss')) |")
 $reportLines.Add("| **Run Command Name** | ``$($script:RunCommandName)`` |")
 $reportLines.Add("| **Subscription ID** | ``$SubscriptionId`` |")
@@ -679,7 +748,7 @@ if ($FilterTags -and $FilterTags.Count -gt 0) {
 if ($FilterFQDNs -and $FilterFQDNs.Count -gt 0) {
     $reportLines.Add("| **FQDN Filter** | $($FilterFQDNs -join ', ') |")
 }
-$reportLines.Add("| **Cleanup** | $(if ($SkipCleanup) { 'Skipped — ARM resources retained' } else { 'Completed' }) |")
+$reportLines.Add("| **Cleanup** | $(if ($Cleanup) { 'Completed' } else { 'Skipped - ARM resources retained for reuse' }) |")
 $reportLines.Add('')
 
 # ── Statistics ────────────────────────────────────────────────────────────────
