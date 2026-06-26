@@ -152,14 +152,21 @@ A ready-to-use diagnostic script for `ArcScriptHarness.ps1` that collects the fo
 | Machine name | `$env:COMPUTERNAME` |
 | Domain / workgroup | WMI `Win32_ComputerSystem` |
 | IPv4 address(es) | `Get-NetIPAddress` (falls back to DNS resolution on PS 5.1) |
-| Latest cumulative update title | Windows Update Agent COM API (`Microsoft.Update.Session`) |
-| Latest cumulative update KB number | Parsed from WUA title |
-| Latest cumulative update install date | WUA `QueryHistory` |
+| Latest OS update title | Windows Update Agent COM API (`Microsoft.Update.Session`) |
+| Latest OS update KB number | Parsed from WUA title |
+| Latest OS update install date | WUA `QueryHistory` |
+
+Only updates whose title contains `for Windows <OS>` are considered — the phrase present in every genuine OS quality update (cumulative, security, servicing stack, .NET framework, etc.) per Microsoft's official naming convention.
+
+The `YYYY-MM` date prefix is intentionally **not** used as a match criterion: Microsoft now applies that prefix to non-OS component updates as well (e.g. Windows ML platform updates), making it an unreliable indicator of an OS-level patch.
+
+| Pattern | Matches | Excluded by |
+|---|---|---|
+| `for Windows (?:Server\|\d)` | `for Windows Server 2016/2019/2022/2025`, `for Windows 10`, `for Windows 11` | Anything else, including `for Windows Defender` (`Defender` starts with neither `Server` nor a digit) |
 
 ### WUA Fallback
 
 The Windows Update Agent COM query runs inside a background job with a **90-second timeout** to prevent the script from stalling on machines with a locked or oversized update datastore. If the WUA COM interface is unavailable or the job times out, the script automatically falls back to `Get-HotFix`.
-
 ### Requirements
 
 - PowerShell 5.1 or later (executes on the Arc agent, not the machine running the harness)
@@ -173,7 +180,7 @@ Machine Name      : SERVER01
 Domain            : contoso.com
 IP Address(es)    : 10.0.1.42, 10.0.1.43
 
---- Latest Cumulative Update ---
+--- Latest OS Update ---
 Display Name      : 2025-11 Cumulative Update for Windows Server 2022 (KB5046613)
 KB Version        : KB5046613
 Install Date      : 2025-11-12

@@ -1,7 +1,9 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-    Collects machine name, logon domain, IP address, and latest cumulative update.
+    Collects machine name, logon domain, IP address, and latest OS update.
+    Defender definition updates, security intelligence updates, and other
+    non-OS component updates are excluded from the result.
     Designed to run via ArcScriptHarness.ps1. No modification needed — the harness
     wraps this script in a try/catch automatically.
 #>
@@ -31,10 +33,10 @@ try {
 }
 $ipDisplay = if ($ipList -and $ipList.Count -gt 0) { $ipList -join ', ' } else { 'None found' }
 
-# ── Latest cumulative update via Windows Update Agent COM API ─────────────────
-$cuTitle   = 'Not found'
-$cuKB      = 'N/A'
-$cuDate    = 'N/A'
+# ── Latest OS update via Windows Update Agent COM API ───────────────────────
+$updateTitle = 'Not found'
+$updateKB    = 'N/A'
+$updateDate  = 'N/A'
 
 # Run the WUA COM query in a background job so it cannot stall the script
 # indefinitely (GetTotalHistoryCount or QueryHistory can block on a locked
@@ -47,18 +49,32 @@ $wuaJob = Start-Job -ScriptBlock {
         $totalCount = $searcher.GetTotalHistoryCount()
 
         if ($totalCount -gt 0) {
-            # Fetch the 50 most-recent entries (newest-first); the latest CU
-            # will appear near the top on any normally-patched machine.
-            $history  = $searcher.QueryHistory(0, [Math]::Min($totalCount, 50))
-            $latestCU = $history |
-                Where-Object { $_.ResultCode -eq 2 -and $_.Title -match 'Cumulative Update' } |
+            # Fetch the 100 most-recent entries (newest-first).
+            # Match only updates whose title contains 'for Windows <OS>' — the phrase
+            # present in every genuine OS quality update per Microsoft's naming convention
+            # (cumulative, security, servicing stack, .NET framework updates, etc.).
+            #
+            # The YYYY-MM date prefix is intentionally NOT used as a match criterion:
+            # Microsoft now applies that prefix to non-OS component updates as well
+            # (e.g. 'Windows ML OpenVINO Update'), so it is no longer a reliable
+            # indicator of an OS-level patch.
+            #
+            # Pattern:  for Windows (?:Server|\d)
+            #   'Server' — covers Windows Server 2016/2019/2022/2025
+            #   '\d'     — covers Windows 10/11 (version number starts with a digit)
+            # Intentionally excludes 'for Windows Defender' because 'Defender' starts
+            # with neither 'Server' nor a digit.
+            $history        = $searcher.QueryHistory(0, [Math]::Min($totalCount, 100))
+            $includePattern = 'for Windows (?:Server|\d)'
+            $latestUpdate   = $history |
+                Where-Object { $_.ResultCode -eq 2 -and $_.Title -match $includePattern } |
                 Sort-Object Date -Descending |
                 Select-Object -First 1
 
-            if ($latestCU) {
-                $result.Title = $latestCU.Title
-                $result.Date  = $latestCU.Date.ToString('yyyy-MM-dd')
-                $result.KB    = if ($latestCU.Title -match '(KB\d+)') { $Matches[1] } else { 'KB not parseable from title' }
+            if ($latestUpdate) {
+                $result.Title = $latestUpdate.Title
+                $result.Date  = $latestUpdate.Date.ToString('yyyy-MM-dd')
+                $result.KB    = if ($latestUpdate.Title -match '(KB\d+)') { $Matches[1] } else { 'KB not parseable from title' }
             }
         }
     } catch {
@@ -80,24 +96,24 @@ if ($wuaCompleted) {
                 Select-Object -First 1
 
             if ($hotfix) {
-                $cuTitle = "$($hotfix.Description) - $($hotfix.HotFixID)"
-                $cuKB    = $hotfix.HotFixID
-                if ($hotfix.InstalledOn) { $cuDate = $hotfix.InstalledOn.ToString('yyyy-MM-dd') } else { $cuDate = 'Unknown' }
+                $updateTitle = "$($hotfix.Description) - $($hotfix.HotFixID)"
+                $updateKB    = $hotfix.HotFixID
+                if ($hotfix.InstalledOn) { $updateDate = $hotfix.InstalledOn.ToString('yyyy-MM-dd') } else { $updateDate = 'Unknown' }
             } else {
-                $cuTitle = 'No hotfixes found via fallback'
+                $updateTitle = 'No hotfixes found via fallback'
             }
         } catch {
-            $cuTitle = "ERROR retrieving update info: $($_.Exception.Message)"
+            $updateTitle = "ERROR retrieving update info: $($_.Exception.Message)"
         }
     } else {
-        $cuTitle = $wuaData.Title
-        $cuKB    = $wuaData.KB
-        $cuDate  = $wuaData.Date
+        $updateTitle = $wuaData.Title
+        $updateKB    = $wuaData.KB
+        $updateDate  = $wuaData.Date
     }
 } else {
     # Job did not finish within 90 seconds — kill it and report the timeout
     Stop-Job    -Job $wuaJob
-    $cuTitle = 'WUA query timed out (>90s) — datastore may be locked or oversized'
+    $updateTitle = 'WUA query timed out (>90s) — datastore may be locked or oversized'
 }
 Remove-Job -Job $wuaJob -Force
 
@@ -107,7 +123,7 @@ Write-Output "Machine Name      : $machineName"
 Write-Output "Domain            : $domain"
 Write-Output "IP Address(es)    : $ipDisplay"
 Write-Output ""
-Write-Output "--- Latest Cumulative Update ---"
-Write-Output "Display Name      : $cuTitle"
-Write-Output "KB Version        : $cuKB"
-Write-Output "Install Date      : $cuDate"
+Write-Output "--- Latest OS Update ---"
+Write-Output "Display Name      : $updateTitle"
+Write-Output "KB Version        : $updateKB"
+Write-Output "Install Date      : $updateDate"
