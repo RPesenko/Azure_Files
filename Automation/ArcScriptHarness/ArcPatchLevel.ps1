@@ -129,7 +129,7 @@ if ($wuaCompleted) {
 } else {
     # Job did not finish within 90 seconds — kill it and report the timeout
     Stop-Job  -Job $wuaJob
-    $updateSource = 'WUA query timed out (>90s) — datastore may be locked or oversized'
+    $updateSource = 'WUA query timed out (>90s) - datastore may be locked or oversized'
 }
 Remove-Job -Job $wuaJob -Force
 
@@ -157,5 +157,5 @@ if ($osUpdates.Count -gt 0) {
         Write-Output ($rowFmt -f $u.KB, $u.Date, $label, $u.Title)
     }
 } else {
-    Write-Output "(No OS updates found — $updateSource)"
+    Write-Output "(No OS updates found - $updateSource)"
 }
