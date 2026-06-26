@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+#Requires -Version 7.2
 <#
 .SYNOPSIS
     Sends a diagnostic PowerShell script to Azure Arc-enabled Windows servers and logs results to Markdown.
@@ -43,8 +43,9 @@
     Example: @{ Environment = 'Prod'; Team = 'Ops' }
 
 .PARAMETER BatchSize
-    Number of machines to submit per batch. Default: 10.
-    Keeps ARM write operations within the rate-limit refill rate (~10/sec).
+    Number of machines to submit per batch. Default: 10. Also controls the ThrottleLimit
+    for concurrent ARM write operations within each batch (all machines in a batch are
+    submitted in parallel). Keeps ARM write operations within the rate-limit refill rate (~10/sec).
 
 .PARAMETER BatchDelaySeconds
     Seconds to wait between submission batches. Default: 2.
@@ -84,6 +85,13 @@
     Run command name format: ArcDiag-yyyyMMddHHmmss (22 chars, within the 36-char API limit).
     Re-running the harness within the same second against the same machines will cause a name
     collision. In normal use this cannot occur.
+
+    PARALLEL EXECUTION (PowerShell 7.2+ required)
+    Within each batch all Run Command submissions are dispatched concurrently using
+    ForEach-Object -Parallel. Each polling round and the cleanup phase are also parallelised.
+    Each parallel runspace re-establishes the Az context via Set-AzContext so no interactive
+    sign-in is required in child runspaces. BatchSize doubles as the submission ThrottleLimit;
+    polling is capped at 20 concurrent GETs and cleanup at 10 concurrent DELETEs.
 #>
 
 [CmdletBinding(SupportsShouldProcess)]
@@ -285,11 +293,15 @@ for ($i = 0; $i -lt $targetMachines.Count; $i += $BatchSize) {
     $batches.Add(@($targetMachines[$i..$end]))
 }
 
+# Capture script-scoped name into a plain variable for use in $using: scope
+$runCommandName = $script:RunCommandName
+
 $batchNum = 0
 foreach ($batch in $batches) {
     $batchNum++
     Write-Status "Submitting batch $batchNum / $($batches.Count) ($($batch.Count) machine(s))..."
 
+    # Pre-initialise state entries sequentially so downstream phases can reference every machine
     foreach ($machine in $batch) {
         $mKey = Get-MachineKey -Machine $machine
         $machineState[$mKey] = @{
@@ -299,51 +311,82 @@ foreach ($batch in $batches) {
             Status      = 'Pending'
             Result      = $null
         }
+    }
 
-        $maxRetries = 3
-        $attempt    = 0
-        $submitted  = $false
+    # Submit all machines in the batch concurrently; ThrottleLimit caps in-flight ARM writes
+    $batchResults = $batch | ForEach-Object -Parallel {
+        $machine     = $_
+        $mKey        = "$($machine.ResourceGroupName)/$($machine.Name)"
+        $maxRetries  = 3
+        $attempt     = 0
+        $submitted   = $false
+        $submittedAt = $null
+        $errorMsg    = $null
+        $warnings    = [System.Collections.Generic.List[string]]::new()
+
+        # ForEach-Object -Parallel runs in a fresh runspace — re-establish the Az context
+        $null = Set-AzContext -Context $using:azContext -ErrorAction SilentlyContinue
 
         while ($attempt -lt $maxRetries -and -not $submitted) {
             $attempt++
             try {
                 $null = New-AzConnectedMachineRunCommand `
-                    -SubscriptionId    $SubscriptionId `
+                    -SubscriptionId    $using:SubscriptionId `
                     -ResourceGroupName $machine.ResourceGroupName `
                     -MachineName       $machine.Name `
                     -Location          $machine.Location `
-                    -RunCommandName    $script:RunCommandName `
-                    -SourceScript      $wrappedScript `
+                    -RunCommandName    $using:runCommandName `
+                    -SourceScript      $using:wrappedScript `
                     -AsyncExecution `
-                    -TimeoutInSecond   $TimeoutSeconds
+                    -TimeoutInSecond   $using:TimeoutSeconds
 
-                $machineState[$mKey].SubmittedAt = Get-Date
-                $machineState[$mKey].Status      = 'Submitted'
-                $submitted = $true
-                Write-Status ("  [OK]  {0} ({1})" -f $machine.Name, $machine.ResourceGroupName) 'Green'
+                $submittedAt = Get-Date
+                $submitted   = $true
 
             } catch {
                 $errMsg     = $_.Exception.Message
                 $isThrottle = $errMsg -match '429|TooManyRequests|too many requests'
 
                 if ($isThrottle -and $attempt -lt $maxRetries) {
-                    # Exponential backoff: 10s, 20s, 30s
                     $waitSec = 10 * $attempt
-                    Write-Status ("  [429] {0} — rate limited, waiting {1}s (attempt {2}/{3})..." -f
-                        $machine.Name, $waitSec, $attempt, $maxRetries) 'Yellow'
+                    $warnings.Add(("  [429] {0} — rate limited, waiting {1}s (attempt {2}/{3})..." -f
+                        $machine.Name, $waitSec, $attempt, $maxRetries))
                     Start-Sleep -Seconds $waitSec
                 } else {
-                    Write-Status ("  [ERR] {0} — {1}" -f $machine.Name, $errMsg) 'Red'
-                    $machineState[$mKey].Status = 'SubmissionError'
-                    $submissionErrors.Add([pscustomobject]@{
-                        MachineKey    = $mKey
-                        MachineName   = $machine.Name
-                        ResourceGroup = $machine.ResourceGroupName
-                        Error         = $errMsg
-                    })
+                    $errorMsg = $errMsg
                     break
                 }
             }
+        }
+
+        [pscustomobject]@{
+            MachineKey    = $mKey
+            MachineName   = $machine.Name
+            ResourceGroup = $machine.ResourceGroupName
+            Submitted     = $submitted
+            SubmittedAt   = $submittedAt
+            Error         = $errorMsg
+            Warnings      = $warnings.ToArray()
+        }
+    } -ThrottleLimit $BatchSize
+
+    # Merge parallel results back into $machineState (sequential — no concurrency concerns)
+    foreach ($sub in $batchResults) {
+        foreach ($warn in $sub.Warnings) { Write-Status $warn 'Yellow' }
+
+        if ($sub.Submitted) {
+            $machineState[$sub.MachineKey].SubmittedAt = $sub.SubmittedAt
+            $machineState[$sub.MachineKey].Status      = 'Submitted'
+            Write-Status ("  [OK]  {0} ({1})" -f $sub.MachineName, $sub.ResourceGroup) 'Green'
+        } else {
+            $machineState[$sub.MachineKey].Status = 'SubmissionError'
+            Write-Status ("  [ERR] {0} — {1}" -f $sub.MachineName, $sub.Error) 'Red'
+            $submissionErrors.Add([pscustomobject]@{
+                MachineKey    = $sub.MachineKey
+                MachineName   = $sub.MachineName
+                ResourceGroup = $sub.ResourceGroup
+                Error         = $sub.Error
+            })
         }
     }
 
@@ -375,62 +418,128 @@ foreach ($key in $machineState.Keys) {
 $pendingCount = $submittedKeys.Count
 
 while ($pendingCount -gt 0) {
-    $stillPending = 0
-
-    foreach ($mKey in $submittedKeys) {
-        if ($completedKeys.Contains($mKey)) { continue }
-
-        $entry   = $machineState[$mKey]
-        $machine = $entry.Machine
-
-        # Per-machine timeout
-        $elapsed = (Get-Date) - $entry.SubmittedAt
-        if ($elapsed.TotalSeconds -gt $TimeoutSeconds) {
-            Write-Status ("  [TIMEOUT] {0}" -f $machine.Name) 'Yellow'
-            $entry.Status      = 'TimedOut'
-            $entry.CompletedAt = Get-Date
-            [void]$completedKeys.Add($mKey)
-            continue
+    # Build lightweight per-machine input objects — avoids serialising the full $machineState
+    # hashtable into every parallel runspace
+    $pollInputs = @(
+        $submittedKeys |
+        Where-Object { -not $completedKeys.Contains($_) } |
+        ForEach-Object {
+            [pscustomobject]@{
+                MachineKey    = $_
+                MachineName   = $machineState[$_].Machine.Name
+                ResourceGroup = $machineState[$_].Machine.ResourceGroupName
+                SubmittedAt   = $machineState[$_].SubmittedAt
+            }
         }
+    )
+
+    # Poll all pending machines concurrently; ThrottleLimit caps in-flight ARM GETs
+    $pollResults = $pollInputs | ForEach-Object -Parallel {
+        $item = $_
+
+        $elapsed = (Get-Date) - $item.SubmittedAt
+        if ($elapsed.TotalSeconds -gt $using:TimeoutSeconds) {
+            return [pscustomobject]@{
+                MachineKey  = $item.MachineKey
+                MachineName = $item.MachineName
+                Outcome     = 'TimedOut'
+                Result      = $null
+                ExitCode    = $null
+                ExecState   = $null
+                PollError   = $null
+                CompletedAt = Get-Date
+            }
+        }
+
+        $null = Set-AzContext -Context $using:azContext -ErrorAction SilentlyContinue
 
         try {
             $runResult = Get-AzConnectedMachineRunCommand `
-                -SubscriptionId    $SubscriptionId `
-                -ResourceGroupName $machine.ResourceGroupName `
-                -MachineName       $machine.Name `
-                -RunCommandName    $script:RunCommandName
+                -SubscriptionId    $using:SubscriptionId `
+                -ResourceGroupName $item.ResourceGroup `
+                -MachineName       $item.MachineName `
+                -RunCommandName    $using:runCommandName
 
             $provState  = $runResult.ProvisioningState
             $execState  = $runResult.InstanceViewExecutionState
 
             # A machine is done when ARM provisioning reached a terminal state AND
             # the script is no longer actively running on the agent
-            $isTerminal = ($provState -in $terminalProvStates) -and ($execState -ne 'Running')
+            $isTerminal = ($provState -in $using:terminalProvStates) -and ($execState -ne 'Running')
 
             if ($isTerminal) {
-                $entry.Result      = $runResult
-                $entry.CompletedAt = Get-Date
-                $exitCode          = $runResult.InstanceViewExitCode
-
-                if ($exitCode -eq 0) {
-                    $entry.Status = 'Success'
-                    Write-Status ("  [OK]   {0} | ExitCode: {1} | ExecState: {2}" -f
-                        $machine.Name, $exitCode, $execState) 'Green'
-                } else {
-                    $entry.Status = 'ScriptError'
-                    Write-Status ("  [FAIL] {0} | ExitCode: {1} | ExecState: {2}" -f
-                        $machine.Name, $exitCode, $execState) 'Red'
+                $exitCode = $runResult.InstanceViewExitCode
+                $outcome  = if ($exitCode -eq 0) { 'Success' } else { 'ScriptError' }
+                return [pscustomobject]@{
+                    MachineKey  = $item.MachineKey
+                    MachineName = $item.MachineName
+                    Outcome     = $outcome
+                    Result      = $runResult
+                    ExitCode    = $exitCode
+                    ExecState   = $execState
+                    PollError   = $null
+                    CompletedAt = Get-Date
                 }
-                [void]$completedKeys.Add($mKey)
-            } else {
-                $stillPending++
             }
 
+            return [pscustomobject]@{
+                MachineKey  = $item.MachineKey
+                MachineName = $item.MachineName
+                Outcome     = 'Pending'
+                Result      = $null
+                ExitCode    = $null
+                ExecState   = $null
+                PollError   = $null
+                CompletedAt = $null
+            }
         } catch {
-            # Transient poll error — log and retry next round
-            Write-Status ("  [POLL] {0} — poll error (will retry): {1}" -f
-                $machine.Name, $_.Exception.Message) 'Yellow'
-            $stillPending++
+            return [pscustomobject]@{
+                MachineKey  = $item.MachineKey
+                MachineName = $item.MachineName
+                Outcome     = 'Pending'
+                Result      = $null
+                ExitCode    = $null
+                ExecState   = $null
+                PollError   = $_.Exception.Message
+                CompletedAt = $null
+            }
+        }
+    } -ThrottleLimit 20
+
+    # Merge poll results back into $machineState (sequential)
+    $stillPending = 0
+    foreach ($pr in $pollResults) {
+        switch ($pr.Outcome) {
+            'TimedOut' {
+                $machineState[$pr.MachineKey].Status      = 'TimedOut'
+                $machineState[$pr.MachineKey].CompletedAt = $pr.CompletedAt
+                [void]$completedKeys.Add($pr.MachineKey)
+                Write-Status ("  [TIMEOUT] {0}" -f $pr.MachineName) 'Yellow'
+            }
+            'Success' {
+                $machineState[$pr.MachineKey].Result      = $pr.Result
+                $machineState[$pr.MachineKey].CompletedAt = $pr.CompletedAt
+                $machineState[$pr.MachineKey].Status      = 'Success'
+                [void]$completedKeys.Add($pr.MachineKey)
+                Write-Status ("  [OK]   {0} | ExitCode: {1} | ExecState: {2}" -f
+                    $pr.MachineName, $pr.ExitCode, $pr.ExecState) 'Green'
+            }
+            'ScriptError' {
+                $machineState[$pr.MachineKey].Result      = $pr.Result
+                $machineState[$pr.MachineKey].CompletedAt = $pr.CompletedAt
+                $machineState[$pr.MachineKey].Status      = 'ScriptError'
+                [void]$completedKeys.Add($pr.MachineKey)
+                Write-Status ("  [FAIL] {0} | ExitCode: {1} | ExecState: {2}" -f
+                    $pr.MachineName, $pr.ExitCode, $pr.ExecState) 'Red'
+            }
+            default {
+                # 'Pending' — still running
+                $stillPending++
+                if ($pr.PollError) {
+                    Write-Status ("  [POLL] {0} — poll error (will retry): {1}" -f
+                        $pr.MachineName, $pr.PollError) 'Yellow'
+                }
+            }
         }
     }
 
@@ -450,28 +559,38 @@ Write-Status 'All machines have reached a terminal state.'
 # ──────────────────────────────────────────────────────────────────────────────
 if (-not $SkipCleanup) {
     Write-Status '─── Phase 5: Cleanup ─────────────────────────────────────────' 'White'
-    $cleanedCount   = 0
-    $cleanErrCount  = 0
 
-    foreach ($mKey in $machineState.Keys) {
-        $entry = $machineState[$mKey]
-        # Only remove if we actually created the ARM resource
-        if ($entry.Status -eq 'SubmissionError') { continue }
+    # Collect machines for which a run command ARM resource was actually created
+    $cleanableMachines = @(
+        $machineState.Keys |
+        Where-Object { $machineState[$_].Status -ne 'SubmissionError' } |
+        ForEach-Object { $machineState[$_].Machine }
+    )
 
-        $machine = $entry.Machine
-        try {
-            Remove-AzConnectedMachineRunCommand `
-                -SubscriptionId    $SubscriptionId `
-                -ResourceGroupName $machine.ResourceGroupName `
-                -MachineName       $machine.Name `
-                -RunCommandName    $script:RunCommandName `
-                -ErrorAction       Stop
-            $cleanedCount++
-        } catch {
-            $cleanErrCount++
-            Write-Status ("  [WARN] Could not remove run command for {0}: {1}" -f
-                $machine.Name, $_.Exception.Message) 'Yellow'
-        }
+    # @() forces an array even when only one machine is cleaned — required by Set-StrictMode
+    $cleanResults = @(
+        $cleanableMachines | ForEach-Object -Parallel {
+            $machine = $_
+            $null = Set-AzContext -Context $using:azContext -ErrorAction SilentlyContinue
+            try {
+                Remove-AzConnectedMachineRunCommand `
+                    -SubscriptionId    $using:SubscriptionId `
+                    -ResourceGroupName $machine.ResourceGroupName `
+                    -MachineName       $machine.Name `
+                    -RunCommandName    $using:runCommandName `
+                    -ErrorAction       Stop
+                [pscustomobject]@{ MachineName = $machine.Name; Success = $true; Error = $null }
+            } catch {
+                [pscustomobject]@{ MachineName = $machine.Name; Success = $false; Error = $_.Exception.Message }
+            }
+        } -ThrottleLimit 10
+    )
+
+    # @() on Where-Object guards against a single match returning a bare object (not an array)
+    $cleanedCount  = @($cleanResults | Where-Object {  $_.Success }).Count
+    $cleanErrCount = @($cleanResults | Where-Object { -not $_.Success }).Count
+    foreach ($cr in @($cleanResults | Where-Object { -not $_.Success })) {
+        Write-Status ("  [WARN] Could not remove run command for {0}: {1}" -f $cr.MachineName, $cr.Error) 'Yellow'
     }
     Write-Status "Removed $cleanedCount run command resource(s). $cleanErrCount removal error(s)."
 } else {
