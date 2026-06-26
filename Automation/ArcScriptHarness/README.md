@@ -161,9 +161,10 @@ A ready-to-use diagnostic script for `ArcScriptHarness.ps1` that collects the fo
 | Machine name | `$env:COMPUTERNAME` |
 | Domain / workgroup | WMI `Win32_ComputerSystem` |
 | IPv4 address(es) | `Get-NetIPAddress` (falls back to DNS resolution on PS 5.1) |
-| Latest OS update title | Windows Update Agent COM API (`Microsoft.Update.Session`) |
-| Latest OS update KB number | Parsed from WUA title |
-| Latest OS update install date | WUA `QueryHistory` |
+| 5 most recent OS update titles | Windows Update Agent COM API (`Microsoft.Update.Session`) |
+| OS update KB numbers | Parsed from WUA title |
+| OS update install dates | WUA `QueryHistory` |
+| OS update result codes | WUA `QueryHistory` (2=Success, 3=Partial, 4=Failed, 5=Aborted) |
 
 Only updates that match an OS update phrase are considered. Microsoft uses two naming conventions:
 
@@ -181,7 +182,7 @@ Combined, these exclude `for Windows Defender` and `for Microsoft Defender` — 
 
 ### WUA Fallback
 
-The Windows Update Agent COM query runs inside a background job with a **90-second timeout** to prevent the script from stalling on machines with a locked or oversized update datastore. If the WUA COM interface is unavailable or the job times out, the script automatically falls back to `Get-HotFix`.
+The Windows Update Agent COM query runs inside a background job with a **90-second timeout** to prevent the script from stalling on machines with a locked or oversized update datastore. If the WUA COM interface is unavailable or the job times out, the script automatically falls back to `Get-HotFix`, which returns up to 5 of the most recently installed hotfixes. Result codes are shown as `Installed` in the fallback case since `Get-HotFix` only surfaces patches that were successfully applied.
 ### Requirements
 
 - PowerShell 5.1 or later (executes on the Arc agent, not the machine running the harness)
@@ -195,10 +196,14 @@ Machine Name      : SERVER01
 Domain            : contoso.com
 IP Address(es)    : 10.0.1.42, 10.0.1.43
 
---- Latest OS Update ---
-Display Name      : 2026-06 Cumulative Update for Microsoft server operating system version 21H2 for x64-based Systems (KB5063060)
-KB Version        : KB5063060
-Install Date      : 2026-06-11
+--- 5 Most Recent OS Updates (WUA) ---
+KB            Date         Result     Title
+------------  ----------   ---------  ------------------------------------------------------------
+KB5063060     2026-06-11   Success    2026-06 Cumulative Update for Microsoft server operating system version 21H2 for x64-based Systems (KB5063060)
+KB5058385     2026-05-14   Success    2026-05 Cumulative Update for Microsoft server operating system version 21H2 for x64-based Systems (KB5058385)
+KB5055526     2026-04-08   Success    2026-04 Cumulative Update for Microsoft server operating system version 21H2 for x64-based Systems (KB5055526)
+KB5053603     2026-03-11   Success    2026-03 Cumulative Update for Microsoft server operating system version 21H2 for x64-based Systems (KB5053603)
+KB5052000     2026-02-11   Success    2026-02 Cumulative Update for Microsoft server operating system version 21H2 for x64-based Systems (KB5052000)
 ```
 
 ### Usage
