@@ -67,7 +67,7 @@
 
 .PARAMETER TimeoutSeconds
     Maximum seconds to wait for a single machine's script to complete before marking
-    it as timed out. Default: 600 (10 minutes).
+    it as timed out. Default: 720 (12 minutes).
 
 .PARAMETER PollIntervalSeconds
     Seconds to wait between polling rounds. Default: 15.
@@ -120,7 +120,7 @@
         -MachineName          'SERVER01','server02.contoso.com','SERVER03'
 
 .NOTES
-    Version: 1.0.0
+    Version: 1.1.0
 
     Run command name format: ArcDiag-<ScriptBaseName> - stable across runs (max 36 chars).
     The Run Command ARM resource is created on first use and reused on subsequent runs:
@@ -128,6 +128,20 @@
       ReRun  - resource exists and script hash matches; re-executed unchanged.
       Update - resource exists but script content has changed; updated before execution.
     Run Command resources are retained by default; pass -Cleanup to remove after collection.
+
+    SUBMISSION BEHAVIOUR
+    New-AzConnectedMachineRunCommand is called with -NoWait so the cmdlet returns as soon as
+    ARM accepts the request (HTTP 202), without blocking until the Arc agent on each machine
+    picks up and acknowledges the command. This eliminates the per-agent pickup delay from
+    the submission phase. Auth failures, invalid parameters, and network errors still throw
+    immediately; only post-202 ARM failures (rare for healthy machines) bypass the submission
+    error check and are instead surfaced as timeouts during polling.
+
+    POLLING BEHAVIOUR
+    After all batches are submitted, the harness waits 30 seconds before the first poll round
+    to allow agents time to pick up and start executing the command before any GETs are issued.
+    Subsequent rounds run every PollIntervalSeconds (default: 15) until all machines reach a
+    terminal state or time out.
 
     PARALLEL EXECUTION (PowerShell 7.2+ required)
     Within each batch all Run Command submissions are dispatched concurrently using
@@ -176,7 +190,7 @@ param (
 
     [Parameter()]
     [ValidateRange(30, 3600)]
-    [int] $TimeoutSeconds = 600,
+    [int] $TimeoutSeconds = 720,
 
     [Parameter()]
     [ValidateRange(5, 300)]
@@ -187,7 +201,7 @@ param (
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
-$script:Version        = '1.0.0'
+$script:Version        = '1.1.0'
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Helpers
@@ -460,7 +474,7 @@ foreach ($batch in $batches) {
         while ($attempt -lt $maxRetries -and -not $submitted) {
             $attempt++
             try {
-                $null = New-AzConnectedMachineRunCommand `
+                $lroResult = New-AzConnectedMachineRunCommand `
                     -SubscriptionId    $using:SubscriptionId `
                     -ResourceGroupName $machine.ResourceGroupName `
                     -MachineName       $machine.Name `
@@ -468,10 +482,11 @@ foreach ($batch in $batches) {
                     -RunCommandName    $using:runCommandName `
                     -SourceScript      $using:wrappedScript `
                     -AsyncExecution `
-                    -TimeoutInSecond   $using:TimeoutSeconds
+                    -TimeoutInSecond   $using:TimeoutSeconds `
+                    -NoWait
 
                 $submittedAt = Get-Date
-                $submitted   = $true
+                $submitted   = ($null -ne $lroResult)
 
             } catch {
                 $errMsg     = $_.Exception.Message
@@ -552,6 +567,14 @@ foreach ($key in $machineState.Keys) {
 }
 
 $pendingCount = $submittedKeys.Count
+
+# Brief initial wait before first poll — Arc agents need time to pick up and start
+# executing the run command. Skipping early polls avoids unnecessary ARM GETs.
+if ($pendingCount -gt 0) {
+    $initialWaitSeconds = 30
+    Write-Status "Waiting ${initialWaitSeconds}s before first poll (allowing agents to pick up commands)..." 'DarkCyan'
+    Start-Sleep -Seconds $initialWaitSeconds
+}
 
 while ($pendingCount -gt 0) {
     # Build lightweight per-machine input objects — avoids serialising the full $machineState
