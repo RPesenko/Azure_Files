@@ -201,7 +201,7 @@ param (
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
-$script:Version        = '1.1.0'
+$script:Version        = '1.2.1'
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Helpers
