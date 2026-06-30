@@ -120,7 +120,7 @@
         -MachineName          'SERVER01','server02.contoso.com','SERVER03'
 
 .NOTES
-    Version: 1.1.0
+    Version: 1.2.1
 
     Run command name format: ArcDiag-<ScriptBaseName> - stable across runs (max 36 chars).
     The Run Command ARM resource is created on first use and reused on subsequent runs:
@@ -333,34 +333,53 @@ $candidates = $allMachines | Where-Object { $_.Status -eq 'Connected' -and $_.OS
 # Collect skipped machines (offline or non-Windows) before additional filters
 $skippedMachines = @($allMachines | Where-Object { $_.Status -ne 'Connected' -or $_.OSName -ne 'windows' })
 
+# Track machines excluded by optional filters (RG, Tags, FQDNs, MachineName)
+$filteredOutMachines = [System.Collections.Generic.List[pscustomobject]]::new()
+
 # Resource group filter
 if ($ResourceGroupNames -and $ResourceGroupNames.Count -gt 0) {
     # Normalise to lowercase for case-insensitive match
     $rgNamesLower = $ResourceGroupNames | ForEach-Object { $_.ToLower() }
+    foreach ($m in @($candidates | Where-Object { $_.ResourceGroupName.ToLower() -notin $rgNamesLower })) {
+        $filteredOutMachines.Add([pscustomobject]@{ Machine = $m; Reason = "Resource group '$($m.ResourceGroupName)' not in RG filter: $($ResourceGroupNames -join ', ')" })
+    }
     $candidates   = $candidates | Where-Object { $_.ResourceGroupName.ToLower() -in $rgNamesLower }
     Write-Status "RG filter          : $($ResourceGroupNames -join ', ')"
 }
 
 # Tag filter — machine must carry ALL specified tag key/value pairs
 if ($FilterTags -and $FilterTags.Count -gt 0) {
+    $tagDesc = ($FilterTags.GetEnumerator() | ForEach-Object { "$($_.Key)=$($_.Value)" }) -join ', '
+    foreach ($m in @($candidates | Where-Object {
+        $machineTags = Get-MachineTags -Machine $_
+        $anyMissing  = $false
+        foreach ($key in $FilterTags.Keys) {
+            if (-not $machineTags.ContainsKey($key) -or $machineTags[$key] -ne $FilterTags[$key]) { $anyMissing = $true; break }
+        }
+        $anyMissing
+    })) {
+        $filteredOutMachines.Add([pscustomobject]@{ Machine = $m; Reason = "Missing required tag(s): $tagDesc" })
+    }
     $candidates = $candidates | Where-Object {
         $machineTags = Get-MachineTags -Machine $_
         $allMatch    = $true
         foreach ($key in $FilterTags.Keys) {
-            if ($machineTags[$key] -ne $FilterTags[$key]) {
+            if (-not $machineTags.ContainsKey($key) -or $machineTags[$key] -ne $FilterTags[$key]) {
                 $allMatch = $false
                 break
             }
         }
         $allMatch
     }
-    $tagDesc = ($FilterTags.GetEnumerator() | ForEach-Object { "$($_.Key)=$($_.Value)" }) -join ', '
     Write-Status "Tag filter         : $tagDesc"
 }
 
 # FQDN filter — only include machines whose FQDN is in the supplied list
 if ($FilterFQDNs -and $FilterFQDNs.Count -gt 0) {
     $fqdnLower  = $FilterFQDNs | ForEach-Object { $_.ToLower() }
+    foreach ($m in @($candidates | Where-Object { (Get-MachineFQDN -Machine $_).ToLower() -notin $fqdnLower })) {
+        $filteredOutMachines.Add([pscustomobject]@{ Machine = $m; Reason = "FQDN '$(Get-MachineFQDN -Machine $m)' not in FQDN filter" })
+    }
     $candidates = $candidates | Where-Object {
         (Get-MachineFQDN -Machine $_).ToLower() -in $fqdnLower
     }
@@ -371,6 +390,12 @@ if ($FilterFQDNs -and $FilterFQDNs.Count -gt 0) {
 # Accepts bare hostnames ('SERVER01'), FQDNs ('server01.contoso.com'), or a mix
 if ($MachineName -and $MachineName.Count -gt 0) {
     $namesLower = $MachineName | ForEach-Object { $_.ToLower() }
+    foreach ($m in @($candidates | Where-Object {
+        $_.Name.ToLower() -notin $namesLower -and
+        (Get-MachineFQDN -Machine $_).ToLower() -notin $namesLower
+    })) {
+        $filteredOutMachines.Add([pscustomobject]@{ Machine = $m; Reason = "Machine name/FQDN not in name filter: $($MachineName -join ', ')" })
+    }
     $candidates = $candidates | Where-Object {
         $_.Name.ToLower() -in $namesLower -or
         (Get-MachineFQDN -Machine $_).ToLower() -in $namesLower
@@ -780,9 +805,10 @@ foreach ($mKey in $machineState.Keys) {
         'TimedOut'    { $statTimeout++ }
     }
 }
-$statSubErr  = $submissionErrors.Count
-$statSkipped = $skippedMachines.Count
-$mdFence     = [string][char]96 * 3   # triple-backtick; avoids `' parser ambiguity in PS language server
+$statSubErr    = $submissionErrors.Count
+$statSkipped   = $skippedMachines.Count
+$statFiltered  = $filteredOutMachines.Count
+$mdFence       = [string][char]96 * 3   # triple-backtick; avoids `' parser ambiguity in PS language server
 
 # ── Header ────────────────────────────────────────────────────────────────────
 $reportLines.Add('# Arc Diagnostic Report')
@@ -822,6 +848,7 @@ $reportLines.Add("| ❌ Script Error (non-zero exit) | $statFail |")
 $reportLines.Add("| ⏱ Timed Out | $statTimeout |")
 $reportLines.Add("| 🚫 Submission Error | $statSubErr |")
 $reportLines.Add("| ⏭ Skipped (offline / non-Windows) | $statSkipped |")
+$reportLines.Add("| 🔽 Filtered Out (by filter parameters) | $statFiltered |")
 $reportLines.Add("| **Total Targeted** | **$($targetMachines.Count)** |")
 $reportLines.Add('')
 
@@ -925,7 +952,7 @@ foreach ($mKey in $machineState.Keys) {
 }
 
 # ── Skipped Machines ──────────────────────────────────────────────────────────
-if ($skippedMachines.Count -gt 0) {
+if ($skippedMachines.Count -gt 0 -or $filteredOutMachines.Count -gt 0) {
     $reportLines.Add('## Skipped Machines')
     $reportLines.Add('')
     $reportLines.Add('| Machine | Resource Group | OS | Agent Status | Reason |')
@@ -934,6 +961,11 @@ if ($skippedMachines.Count -gt 0) {
         if ($m.Status -ne 'Connected') { $reason = 'Agent not connected' } else { $reason = 'Non-Windows OS' }
         if ($m.OSName) { $osName = $m.OSName } else { $osName = 'Unknown' }
         $reportLines.Add("| $($m.Name) | $($m.ResourceGroupName) | $osName | $($m.Status) | $reason |")
+    }
+    foreach ($fo in $filteredOutMachines) {
+        $m = $fo.Machine
+        if ($m.OSName) { $osName = $m.OSName } else { $osName = 'Unknown' }
+        $reportLines.Add("| $($m.Name) | $($m.ResourceGroupName) | $osName | $($m.Status) | $($fo.Reason) |")
     }
     $reportLines.Add('')
 }
