@@ -4,16 +4,36 @@
     Collects InstanceViewOutput from a named Run Command across all Connected Arc
     machines in a resource group and writes the results to a Markdown file.
 
-.NOTES
-    Version: 1.0.0
-    Assumes an active Az context (Connect-AzAccount already run).
-#>
+.PARAMETER ResourceGroupName
+    The resource group containing the Arc machines.
 
-# ── Configuration ─────────────────────────────────────────────────────────────
-$ResourceGroupName = 'MyRG'  # <-- Change this to your resource group name
-$RunCommandName    = 'ArcDiag-ArcParchLevel'
-$OutputPath        = Join-Path $PSScriptRoot ("ArcRunCommandOutput_{0}.md" -f (Get-Date -Format 'yyyyMMddHHmmss'))
-# ──────────────────────────────────────────────────────────────────────────────
+.PARAMETER RunCommandName
+    The name of the Run Command ARM resource to query on each machine.
+
+.PARAMETER OutputPath
+    Path to write the Markdown report.
+    Defaults to ArcRunCommandOutput_<timestamp>.md in the script's directory.
+
+.NOTES
+    Version: 1.1.0
+    Assumes an active Az context (Connect-AzAccount already run).
+
+.EXAMPLE
+    .\Get-ArcRunCommandOutput.ps1 -ResourceGroupName 'MyRG' -RunCommandName 'ArcDiag-ArcPatchLevel'
+
+.EXAMPLE
+    .\Get-ArcRunCommandOutput.ps1 -ResourceGroupName 'MyRG' -RunCommandName 'ArcDiag-ArcPatchLevel' -OutputPath 'C:\Reports\output.md'
+#>
+param (
+    [Parameter(Mandatory)]
+    [string] $ResourceGroupName,
+
+    [Parameter(Mandatory)]
+    [string] $RunCommandName,
+
+    [Parameter()]
+    [string] $OutputPath = (Join-Path $PSScriptRoot ("ArcRunCommandOutput_{0}.md" -f (Get-Date -Format 'yyyyMMddHHmmss')))
+)
 
 $mdFence = '```'
 
