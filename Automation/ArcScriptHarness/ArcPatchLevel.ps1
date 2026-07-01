@@ -1,7 +1,7 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-    Collects machine name, logon domain, IP address, and the five most recent OS updates.
+    Collects the machine FQDN and the five most recent OS updates.
     Results are output as a table showing KB number, install date, result code, and title.
     Defender definition updates, security intelligence updates, and other
     non-OS component updates are excluded from the result.
@@ -9,34 +9,12 @@
     wraps this script in a try/catch automatically.
 
 .NOTES
-    Version: 1.0.0
+    Version: 1.1.0
 #>
-$script:Version = '1.0.0'
+$script:Version = '1.1.0'
 
-# ── Machine name ──────────────────────────────────────────────────────────────
-$machineName = $env:COMPUTERNAME
-
-# ── Domain ────────────────────────────────────────────────────────────────────
-$cs           = Get-CimInstance -ClassName Win32_ComputerSystem -ErrorAction Stop
-$domain       = if ($cs.PartOfDomain) { $cs.Domain } else { 'Not domain-joined (workgroup: ' + $cs.Workgroup + ')' }
-
-# ── IP address(es) — IPv4 only, exclude loopback and APIPA ───────────────────
-$ipList = $null
-try {
-    $ipList = @(
-        Get-NetIPAddress -AddressFamily IPv4 -AddressState Preferred -ErrorAction Stop |
-            Where-Object { $_.IPAddress -ne '127.0.0.1' -and $_.IPAddress -notlike '169.254.*' } |
-            Select-Object -ExpandProperty IPAddress
-    )
-} catch {
-    # Fallback: DNS resolution (works on PS 5.1 without NetAdapter module)
-    $ipList = @(
-        [System.Net.Dns]::GetHostEntry($env:COMPUTERNAME).AddressList |
-            Where-Object { $_.AddressFamily -eq [System.Net.Sockets.AddressFamily]::InterNetwork } |
-            ForEach-Object { $_.IPAddressToString }
-    )
-}
-$ipDisplay = if ($ipList -and $ipList.Count -gt 0) { $ipList -join ', ' } else { 'None found' }
+# ── FQDN ──────────────────────────────────────────────────────────────────────
+$fqdn = [System.Net.Dns]::GetHostEntry('').HostName
 
 # ── 5 most recent OS updates via Windows Update Agent COM API ────────────────
 # Run the WUA COM query in a background job so it cannot stall the script
@@ -140,9 +118,7 @@ Remove-Job -Job $wuaJob -Force
 # ── Output ────────────────────────────────────────────────────────────────────
 Write-Output "=== Arc Patch Level Diagnostic ==="
 Write-Output "Script Version    : $($script:Version)"
-Write-Output "Machine Name      : $machineName"
-Write-Output "Domain            : $domain"
-Write-Output "IP Address(es)    : $ipDisplay"
+Write-Output "FQDN              : $fqdn"
 Write-Output ""
 Write-Output "--- 5 Most Recent OS Updates ($updateSource) ---"
 

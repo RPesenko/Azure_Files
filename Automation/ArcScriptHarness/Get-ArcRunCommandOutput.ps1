@@ -35,6 +35,11 @@ param (
     [string] $OutputPath = (Join-Path $PSScriptRoot ("ArcRunCommandOutput_{0}.md" -f (Get-Date -Format 'yyyyMMddHHmmss')))
 )
 
+# If OutputPath is a directory, append the default timestamped filename
+if (Test-Path $OutputPath -PathType Container) {
+    $OutputPath = Join-Path $OutputPath ("ArcRunCommandOutput_{0}.md" -f (Get-Date -Format 'yyyyMMddHHmmss'))
+}
+
 $mdFence = '```'
 
 # Discover Connected machines
@@ -57,11 +62,30 @@ foreach ($machine in $machines) {
             -RunCommandName    $RunCommandName `
             -ErrorAction       Stop
 
-        $output = if ($cmd.InstanceViewOutput) { $cmd.InstanceViewOutput.TrimEnd() } else { '(no output)' }
-        $results.Add([pscustomobject]@{ MachineName = $machine.Name; Output = $output; Error = $null })
+        $output      = if ($cmd.InstanceViewOutput) { $cmd.InstanceViewOutput.TrimEnd() } else { '(no output)' }
+        $endTime     = if ($cmd.InstanceViewEndTime)   { $cmd.InstanceViewEndTime.ToString('yyyy-MM-dd HH:mm:ss') } else { '-' }
+        $exitCode    = if ($null -ne $cmd.InstanceViewExitCode) { $cmd.InstanceViewExitCode } else { '-' }
+        $durationSec = if ($cmd.InstanceViewStartTime -and $cmd.InstanceViewEndTime) {
+                           [Math]::Round(($cmd.InstanceViewEndTime - $cmd.InstanceViewStartTime).TotalSeconds)
+                       } else { '-' }
+        $results.Add([pscustomobject]@{
+            MachineName  = $machine.Name
+            Output       = $output
+            EndTime      = $endTime
+            DurationSec  = $durationSec
+            ExitCode     = $exitCode
+            Error        = $null
+        })
     }
     catch {
-        $results.Add([pscustomobject]@{ MachineName = $machine.Name; Output = $null; Error = $_.Exception.Message })
+        $results.Add([pscustomobject]@{
+            MachineName  = $machine.Name
+            Output       = $null
+            EndTime      = '-'
+            DurationSec  = '-'
+            ExitCode     = '-'
+            Error        = $_.Exception.Message
+        })
     }
 }
 
@@ -79,6 +103,10 @@ $lines.Add('')
 
 foreach ($r in $results) {
     $lines.Add("## $($r.MachineName)")
+    $lines.Add('')
+    $lines.Add("End Time: $($r.EndTime)   ")
+    $lines.Add("Execution Time: $($r.DurationSec)s   ")
+    $lines.Add("Exit Code: $($r.ExitCode)")
     $lines.Add('')
     if ($r.Error) {
         $lines.Add("*Error: $($r.Error)*")

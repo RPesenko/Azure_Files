@@ -29,9 +29,10 @@
 .PARAMETER SubscriptionId
     The Azure subscription ID containing the Arc agents.
 
-.PARAMETER OutputMarkdownPath
+.PARAMETER OutputPath
     Path to write the Markdown results report.
     Defaults to .\ArcDiagResults_<timestamp>.md in the current directory.
+    If a directory path is supplied, the default filename is used and placed in that directory.
 
 .PARAMETER ResourceGroupNames
     Optional. One or more resource group names to restrict the target machines.
@@ -88,7 +89,7 @@
         -SubscriptionId        'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx' `
         -ResourceGroupNames    'RG-Prod-East','RG-Prod-West' `
         -FilterTags            @{ Environment = 'Production' } `
-        -OutputMarkdownPath    'C:\Reports\DiskHealth.md' `
+        -OutputPath            'C:\Reports\DiskHealth.md' `
         -TimeoutSeconds        300
 
 .EXAMPLE
@@ -120,9 +121,7 @@
         -MachineName          'SERVER01','server02.contoso.com','SERVER03'
 
 .NOTES
-    Version: 1.2.1
-
-    Run command name format: ArcDiag-<ScriptBaseName> - stable across runs (max 36 chars).
+    Version: 1.3.0: ArcDiag-<ScriptBaseName> - stable across runs (max 36 chars).
     The Run Command ARM resource is created on first use and reused on subsequent runs:
       Create - no existing resource found; created fresh.
       ReRun  - resource exists and script hash matches; re-executed unchanged.
@@ -166,7 +165,7 @@ param (
     [string] $SubscriptionId,
 
     [Parameter()]
-    [string] $OutputMarkdownPath,
+    [string] $OutputPath,
 
     [Parameter()]
     [string[]] $ResourceGroupNames,
@@ -201,7 +200,7 @@ param (
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
-$script:Version        = '1.2.1'
+$script:Version        = '1.3.0'
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Helpers
@@ -282,10 +281,12 @@ Write-Status "Diagnostic script  : $DiagnosticScriptPath ($scriptBytes bytes)"
 Write-Status "Script hash        : $($script:ScriptHash)"
 
 # 1b. Default output path
-if (-not $OutputMarkdownPath) {
-    $OutputMarkdownPath = Join-Path (Get-Location).Path "ArcDiagResults_$($script:RunTimestamp).md"
+if (-not $OutputPath) {
+    $OutputPath = Join-Path (Get-Location).Path "ArcDiagResults_$($script:RunTimestamp).md"
+} elseif (Test-Path $OutputPath -PathType Container) {
+    $OutputPath = Join-Path $OutputPath "ArcDiagResults_$($script:RunTimestamp).md"
 }
-Write-Status "Report path        : $OutputMarkdownPath"
+Write-Status "Report path        : $OutputPath"
 
 # 1c. Check Az.ConnectedMachine module
 $minModuleVersion = [version]'0.4.0'
@@ -642,7 +643,8 @@ while ($pendingCount -gt 0) {
                 -SubscriptionId    $using:SubscriptionId `
                 -ResourceGroupName $item.ResourceGroup `
                 -MachineName       $item.MachineName `
-                -RunCommandName    $using:runCommandName
+                -RunCommandName    $using:runCommandName `
+                -ErrorAction       Stop
 
             $provState  = $runResult.ProvisioningState
             $execState  = $runResult.InstanceViewExecutionState
@@ -724,8 +726,14 @@ while ($pendingCount -gt 0) {
                 # 'Pending' — still running
                 $stillPending++
                 if ($pr.PollError) {
-                    Write-Status ("  [POLL] {0} — poll error (will retry): {1}" -f
-                        $pr.MachineName, $pr.PollError) 'Yellow'
+                    # Suppress transient ARM endpoint connectivity noise; just retry silently
+                    $isTransient = $pr.PollError -match 'management\.azure\.com|Unable to connect|connection|SSL|TLS|timeout'
+                    if ($isTransient) {
+                        Write-Status ("  [POLL] {0} — transient connectivity error (will retry)" -f $pr.MachineName) 'DarkYellow'
+                    } else {
+                        Write-Status ("  [POLL] {0} — poll error (will retry): {1}" -f
+                            $pr.MachineName, $pr.PollError) 'Yellow'
+                    }
                 }
             }
         }
@@ -972,13 +980,13 @@ if ($skippedMachines.Count -gt 0 -or $filteredOutMachines.Count -gt 0) {
 
 # ── Write report file ─────────────────────────────────────────────────────────
 $reportContent = $reportLines -join [System.Environment]::NewLine
-$reportDir     = [System.IO.Path]::GetDirectoryName($OutputMarkdownPath)
+$reportDir     = [System.IO.Path]::GetDirectoryName($OutputPath)
 
 if ($reportDir -and -not (Test-Path -Path $reportDir -PathType Container)) {
     New-Item -ItemType Directory -Path $reportDir -Force | Out-Null
 }
 
-Set-Content -Path $OutputMarkdownPath -Value $reportContent -Encoding UTF8
+Set-Content -Path $OutputPath -Value $reportContent -Encoding UTF8
 
-Write-Status "Report written     : $OutputMarkdownPath" 'Green'
+Write-Status "Report written     : $OutputPath" 'Green'
 Write-Status ("Total run time     : {0:mm\:ss} (mm:ss)" -f $totalDuration) 'Green'
