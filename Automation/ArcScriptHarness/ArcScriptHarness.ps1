@@ -26,6 +26,12 @@
 .PARAMETER DiagnosticScriptPath
     Path to the local .ps1 diagnostic script to run on each Arc agent.
 
+.PARAMETER DiagnosticScriptParameters
+    Optional. A hashtable of parameter name/value pairs to pass to the diagnostic script.
+    The diagnostic script must declare a param() block with matching parameter names.
+    Supported value types: Int16, Int32, Int64, Double, Boolean, String.
+    Example: @{ MostRecentCount = 20 }
+
 .PARAMETER SubscriptionId
     The Azure subscription ID containing the Arc agents.
 
@@ -120,8 +126,16 @@
         -SubscriptionId       'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx' `
         -MachineName          'SERVER01','server02.contoso.com','SERVER03'
 
+.EXAMPLE
+    # Pass parameters to the diagnostic script (e.g. retrieve 20 most recent OS updates)
+    .\ArcScriptHarness.ps1 `
+        -DiagnosticScriptPath       .\ArcPatchLevel.ps1 `
+        -SubscriptionId             'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx' `
+        -DiagnosticScriptParameters @{ MostRecentCount = 20 }
+
 .NOTES
-    Version: 1.3.0: ArcDiag-<ScriptBaseName> - stable across runs (max 36 chars).
+    Version: 1.4.0: Added -DiagnosticScriptParameters support; harness now lifts param()
+    blocks to the wrapper top-level so diagnostic scripts with parameters work correctly.
     The Run Command ARM resource is created on first use and reused on subsequent runs:
       Create - no existing resource found; created fresh.
       ReRun  - resource exists and script hash matches; re-executed unchanged.
@@ -159,6 +173,9 @@ param (
         $true
     })]
     [string] $DiagnosticScriptPath,
+
+    [Parameter()]
+    [hashtable] $DiagnosticScriptParameters,
 
     [Parameter(Mandatory)]
     [ValidatePattern('^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$')]
@@ -200,7 +217,7 @@ param (
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
-$script:Version        = '1.3.0'
+$script:Version        = '1.4.0'
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Helpers
@@ -253,23 +270,97 @@ $scriptBase            = ($scriptBase -replace '[^a-zA-Z0-9]', '-' -replace '-{2
 $scriptBase            = $scriptBase.Substring(0, [Math]::Min($scriptBase.Length, 27))
 $script:RunCommandName = "ArcDiag-$scriptBase"
 
-# Compute a short SHA-256 hash of the raw script for change detection.
+# Parse the diagnostic script's AST to detect and extract any top-level param() block.
+# A param() block embedded inside try{} causes a parse error on the target machine;
+# the harness lifts it to the top level of the wrapper so the script receives its
+# parameters correctly while its body still runs inside the error-trapping try/catch.
+$parseErrors = $null; $parseTokens = $null
+$scriptAst   = [System.Management.Automation.Language.Parser]::ParseInput(
+                    $rawScript, [ref]$parseTokens, [ref]$parseErrors)
+if ($parseErrors -and $parseErrors.Count -gt 0) {
+    $errStr = ($parseErrors | ForEach-Object { "  Line $($_.Extent.StartLineNumber): $($_.Message)" }) -join "`n"
+    throw "Diagnostic script '$DiagnosticScriptPath' has parse errors:`n$errStr"
+}
+
+$paramBlockAst = $scriptAst.ParamBlock
+if ($paramBlockAst) {
+    $pbStart        = $paramBlockAst.Extent.StartOffset
+    $pbEnd          = $paramBlockAst.Extent.EndOffset
+    $paramBlockText = $rawScript.Substring($pbStart, $pbEnd - $pbStart)
+    $preamble       = $rawScript.Substring(0, $pbStart)
+    $scriptBody     = $rawScript.Substring($pbEnd).TrimStart()
+} else {
+    $paramBlockText = $null
+    $preamble       = $null
+    $scriptBody     = $rawScript
+}
+
+# Validate DiagnosticScriptParameters keys and build the variable-injection block.
+# Keys are checked against the valid-identifier pattern to prevent code injection.
+# Injection assignments run after param() binding to override defaults.
+$injectedVarsBlock = ''
+if ($DiagnosticScriptParameters -and $DiagnosticScriptParameters.Count -gt 0) {
+    if (-not $paramBlockAst) {
+        throw ("DiagnosticScriptParameters were specified but '$([System.IO.Path]::GetFileName($DiagnosticScriptPath))' " +
+               "has no param() block to receive them.")
+    }
+    $declaredParamNames = @($paramBlockAst.Parameters | ForEach-Object { $_.Name.VariablePath.UserPath })
+    foreach ($key in $DiagnosticScriptParameters.Keys) {
+        if ($key -notmatch '^[a-zA-Z_][a-zA-Z0-9_]*$') {
+            throw "DiagnosticScriptParameters: key '$key' is not a valid PowerShell identifier."
+        }
+        if ($key -notin $declaredParamNames) {
+            Write-Status "  [WARN] DiagnosticScriptParameters: '$key' is not declared in the script's param() block." 'Yellow'
+        }
+    }
+    $injLines = [System.Collections.Generic.List[string]]::new()
+    $injLines.Add('# Harness-injected parameter overrides:')
+    foreach ($key in ($DiagnosticScriptParameters.Keys | Sort-Object)) {
+        $val    = $DiagnosticScriptParameters[$key]
+        $valStr = switch ($true) {
+            ($val -is [int] -or $val -is [long] -or $val -is [short]) { "$val"; break }
+            ($val -is [double] -or $val -is [float])                   { "$val"; break }
+            ($val -is [bool])                                           { if ($val) { '$true' } else { '$false' }; break }
+            ($val -is [string])                                         { "'$($val -replace "'", "''")'" ; break }
+            default {
+                throw ("DiagnosticScriptParameters: value for '$key' has unsupported type " +
+                       "'$($val.GetType().FullName)'. Supported: Int16/32/64, Double, Boolean, String.")
+            }
+        }
+        $injLines.Add("`$$key = $valStr")
+    }
+    $injectedVarsBlock = $injLines -join "`n"
+}
+
+# Compute a short SHA-256 hash that incorporates any injected parameter values so that
+# changing parameters triggers an 'Update' action rather than a 'ReRun'.
 # Compared against the hash embedded in any existing Run Command resource to decide
 # whether to Create, ReRun (same hash), or Update (different hash) the resource.
+$paramSuffix = if ($DiagnosticScriptParameters -and $DiagnosticScriptParameters.Count -gt 0) {
+    "`n# PARAMS: " + (($DiagnosticScriptParameters.GetEnumerator() | Sort-Object Key |
+        ForEach-Object { "$($_.Key)=$($_.Value)" }) -join ',')
+} else { '' }
 $sha256            = [System.Security.Cryptography.SHA256]::Create()
-$hashBytes         = $sha256.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($rawScript))
+$hashBytes         = $sha256.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($rawScript + $paramSuffix))
 $script:ScriptHash = (($hashBytes | ForEach-Object { $_.ToString('x2') }) -join '').Substring(0, 8)
 $sha256.Dispose()
 
-# Wrap in try/catch so any diagnostic script surfaces errors cleanly without modification.
-# ArcHarness-ScriptHash  - stable per script content; used for version detection on reuse.
-# ArcHarness-RunTimestamp - changes every run, ensuring the agent always re-executes even
-#                           when the script content itself has not changed.
+# Build the wrapped script. The diagnostic script's param() block (if present) is placed
+# at the top level of the wrapper so PowerShell parses it correctly on the target machine.
+# Harness-injected variable assignments follow the param block to override defaults.
+# The script body and any preamble comments run inside try/catch for error trapping.
+# ArcHarness-ScriptHash  - stable per script content + params; used for version detection.
+# ArcHarness-RunTimestamp - changes every run, ensuring re-execution on every invocation.
+$paramSection    = if ($paramBlockText)    { $paramBlockText + "`n" }    else { '' }
+$overrideSection = if ($injectedVarsBlock) { $injectedVarsBlock + "`n" } else { '' }
+$bodyContent     = if ($preamble)          { $preamble + $scriptBody }   else { $scriptBody }
+
 $wrappedScript = @"
 # ArcHarness-ScriptHash: $($script:ScriptHash)
 # ArcHarness-RunTimestamp: $($script:RunTimestamp)
+$paramSection$overrideSection
 try {
-$rawScript
+$bodyContent
 } catch {
     Write-Error "UNHANDLED EXCEPTION: `$(`$_.Exception.Message)"
     exit 1
@@ -279,6 +370,11 @@ $rawScript
 $scriptBytes = [System.Text.Encoding]::UTF8.GetByteCount($wrappedScript)
 Write-Status "Diagnostic script  : $DiagnosticScriptPath ($scriptBytes bytes)"
 Write-Status "Script hash        : $($script:ScriptHash)"
+if ($DiagnosticScriptParameters -and $DiagnosticScriptParameters.Count -gt 0) {
+    $paramDisplay = ($DiagnosticScriptParameters.GetEnumerator() | Sort-Object Key |
+        ForEach-Object { "-$($_.Key) $($_.Value)" }) -join ' '
+    Write-Status "Script parameters  : $paramDisplay"
+}
 
 # 1b. Default output path
 if (-not $OutputPath) {
@@ -829,6 +925,11 @@ $reportLines.Add("| **Run Timestamp** | $($script:HarnessStart.ToString('yyyy-MM
 $reportLines.Add("| **Run Command Name** | ``$($script:RunCommandName)`` |")
 $reportLines.Add("| **Subscription ID** | ``$SubscriptionId`` |")
 $reportLines.Add("| **Total Duration** | $([Math]::Round($totalDuration.TotalMinutes, 1)) min |")
+if ($DiagnosticScriptParameters -and $DiagnosticScriptParameters.Count -gt 0) {
+    $paramStr = ($DiagnosticScriptParameters.GetEnumerator() | Sort-Object Key |
+        ForEach-Object { "-$($_.Key) $($_.Value)" }) -join ' '
+    $reportLines.Add("| **Script Parameters** | ``$paramStr`` |")
+}
 
 if ($ResourceGroupNames -and $ResourceGroupNames.Count -gt 0) {
     $reportLines.Add("| **RG Filter** | $($ResourceGroupNames -join ', ') |")

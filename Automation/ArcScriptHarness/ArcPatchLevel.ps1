@@ -1,22 +1,45 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-    Collects the machine FQDN and the five most recent OS updates.
+    Collects the machine FQDN and the most recent OS updates.
     Results are output as a table showing KB number, install date, result code, and title.
     Defender definition updates, security intelligence updates, and other
     non-OS component updates are excluded from the result.
-    Designed to run via ArcScriptHarness.ps1. No modification needed - the harness
-    wraps this script in a try/catch automatically.
+    Designed to run via ArcScriptHarness.ps1. Pass -DiagnosticScriptParameters to override
+    the default count. The harness lifts the param() block automatically.
+
+.PARAMETER MostRecentCount
+    Number of most recent OS updates to return. Must be between 1 and 100. Defaults to 10.
+
+.EXAMPLE
+    # Run directly on the local machine
+    .\ArcPatchLevel.ps1 -MostRecentCount 20
+
+.EXAMPLE
+    # Run via ArcScriptHarness.ps1 with a custom count
+    .\ArcScriptHarness.ps1 `
+        -DiagnosticScriptPath       .\ArcPatchLevel.ps1 `
+        -SubscriptionId             'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx' `
+        -DiagnosticScriptParameters @{ MostRecentCount = 20 }
 
 .NOTES
-    Version: 1.1.0
+    Version: 1.3.0
 #>
-$script:Version = '1.1.0'
+param(
+    [ValidateRange(1, 100)]
+    [int]$MostRecentCount = 10
+)
+$script:Version = '1.3.0'
 
 # ── FQDN ──────────────────────────────────────────────────────────────────────
 $fqdn = [System.Net.Dns]::GetHostEntry('').HostName
 
-# ── 5 most recent OS updates via Windows Update Agent COM API ────────────────
+# ── Parameter validation ──────────────────────────────────────────────────────
+if ($MostRecentCount -lt 1 -or $MostRecentCount -gt 100) {
+    throw "MostRecentCount must be between 1 and 100 (received: $MostRecentCount)."
+}
+
+# ── Most recent OS updates via Windows Update Agent COM API ──────────────────
 # Run the WUA COM query in a background job so it cannot stall the script
 # indefinitely (GetTotalHistoryCount or QueryHistory can block on a locked
 # datastore or a slow WU service).  90 seconds is generous for 200 entries.
@@ -52,7 +75,7 @@ $wuaJob = Start-Job -ScriptBlock {
             $osUpdates      = $history |
                 Where-Object { $_.Title -match $includePattern } |
                 Sort-Object Date -Descending |
-                Select-Object -First 5
+                Select-Object -First $using:MostRecentCount
 
             foreach ($u in $osUpdates) {
                 $kb = if ($u.Title -match '(KB\d+)') { $Matches[1] } else { 'N/A' }
@@ -89,7 +112,7 @@ if ($wuaCompleted) {
                 Get-HotFix -ErrorAction Stop |
                     Where-Object { $_.HotFixID -match '^KB' } |
                     Sort-Object InstalledOn -Descending |
-                    Select-Object -First 5
+                    Select-Object -First $MostRecentCount
             )
             $osUpdates = @(
                 $hotfixes | ForEach-Object {
@@ -120,7 +143,7 @@ Write-Output "=== Arc Patch Level Diagnostic ==="
 Write-Output "Script Version    : $($script:Version)"
 Write-Output "FQDN              : $fqdn"
 Write-Output ""
-Write-Output "--- 5 Most Recent OS Updates ($updateSource) ---"
+Write-Output "--- $MostRecentCount Most Recent OS Updates ($updateSource) ---"
 
 if ($osUpdates.Count -gt 0) {
     $rowFmt = "{0,-13} {1,-12} {2,-10} {3}"

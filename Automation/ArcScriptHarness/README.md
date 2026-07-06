@@ -11,8 +11,9 @@ For a lighter-weight, fire-and-forget alternative, see [`ArcCommand.ps1`](../REA
 | Script | Description |
 |---|---|
 | [`ArcScriptHarness.ps1`](#arcscriptharnessps1) | The harness — handles targeting, parallel submission, polling, retry, and reporting |
-| [`ArcPatchLevel.ps1`](#arcpatchlevelps1) | Sample diagnostic script — collects patch level, domain, and IP info from each machine |
+| [`ArcPatchLevel.ps1`](#arcpatchlevelps1) | Sample diagnostic script — collects machine FQDN and the 5 most recent OS patches |
 | [`ArcMachineHealth.ps1`](#arcmachinehealthps1) | Sample diagnostic script — comprehensive health snapshot: system info, .NET, CPU, memory, disk, network, and recent events |
+| [`Get-ArcRunCommandOutput.ps1`](#get-arcruncommandoutputps1) | Retrieves existing Run Command output from all connected Arc machines in a resource group and writes a Markdown report |
 
 ---
 
@@ -49,7 +50,7 @@ Executes a local PowerShell script against Azure Arc-enabled Windows servers wit
 |---|---|---|---|---|
 | `DiagnosticScriptPath` | `string` | ✅ | — | Path to the local `.ps1` script to run on each Arc agent |
 | `SubscriptionId` | `string` | ✅ | — | Azure subscription ID containing the target Arc machines |
-| `OutputMarkdownPath` | `string` | | `.\ArcDiagResults_<timestamp>.md` | Path to write the Markdown results report |
+| `OutputPath` | `string` | | `.\ArcDiagResults_<timestamp>.md` in the current directory | Path to write the Markdown results report. If a directory path is supplied, the default timestamped filename is generated inside that directory |
 | `ResourceGroupNames` | `string[]` | | *(all RGs)* | One or more resource group names to restrict targets. If omitted, all connected Windows Arc machines in the subscription are targeted |
 | `FilterTags` | `hashtable` | | *(none)* | Tag key/value pairs that machines must **all** carry to be targeted (AND logic). Example: `@{ Environment = 'Prod'; Team = 'Ops' }` |
 | `FilterFQDNs` | `string[]` | | *(none)* | Explicit list of FQDNs to target (case-insensitive). Machines not in the list are excluded. Useful for re-running against machines that failed or timed out in a previous pass without re-processing machines that already succeeded. Example: `'server01.contoso.com','server02.contoso.com'` |
@@ -67,7 +68,7 @@ Executes a local PowerShell script against Azure Arc-enabled Windows servers wit
 | **1 — Validation & Setup** | Validates the script path, checks Az.ConnectedMachine version, authenticates to Azure |
 | **2 — Machine Discovery** | Queries all Arc machines in the subscription; applies Connected/Windows, RG, tag, FQDN, and machine name filters |
 | **3 — Batch Submission** | Splits targets into batches; submits all machines in each batch in parallel |
-| **4 — Poll for Completion** | Polls all pending machines concurrently each round until every machine reaches a terminal state |
+| **4 — Poll for Completion** | Polls all pending machines concurrently each round until every machine reaches a terminal state. Transient `management.azure.com` connectivity errors are caught and retried silently without failing the run |
 | **5 — Cleanup** | Deletes Run Command ARM resources from targeted machines in parallel. Only runs when `-Cleanup` is specified; by default resources are retained for reuse |
 | **6 — Markdown Report** | Writes a formatted report with summary statistics, per-machine output, and skipped machines |
 
@@ -86,7 +87,15 @@ Executes a local PowerShell script against Azure Arc-enabled Windows servers wit
     -DiagnosticScriptPath  .\ArcPatchLevel.ps1 `
     -SubscriptionId        'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx' `
     -ResourceGroupNames    'RG-Prod-East', 'RG-Prod-West' `
-    -OutputMarkdownPath    'C:\Reports\PatchLevel.md'
+    -OutputPath            'C:\Reports\PatchLevel.md'
+```
+
+**Write report to a directory (filename auto-generated):**
+```powershell
+.\ArcScriptHarness.ps1 `
+    -DiagnosticScriptPath .\ArcPatchLevel.ps1 `
+    -SubscriptionId       'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx' `
+    -OutputPath           'C:\Temp\Diags\'
 ```
 
 **Filter by tags:**
@@ -105,7 +114,7 @@ Executes a local PowerShell script against Azure Arc-enabled Windows servers wit
     -BatchSize             25 `
     -BatchDelaySeconds     5 `
     -TimeoutSeconds        900 `
-    -OutputMarkdownPath    'C:\Reports\Results.md'
+    -OutputPath            'C:\Reports\Results.md'
 ```
 
 **Target specific machines by FQDN (e.g. re-run against machines that failed or timed out):**
@@ -175,11 +184,11 @@ Write-Output "Result: $someValue"
 
 A ready-to-use diagnostic script for `ArcScriptHarness.ps1` that collects the following information from each Arc-enabled Windows machine:
 
+> **Version 1.1.0** — Simplified to report the machine FQDN only. Machine name, domain, and IP address fields have been removed.
+
 | Data | Source |
 |---|---|
-| Machine name | `$env:COMPUTERNAME` |
-| Domain / workgroup | WMI `Win32_ComputerSystem` |
-| IPv4 address(es) | `Get-NetIPAddress` (falls back to DNS resolution on PS 5.1) |
+| Machine FQDN | `[System.Net.Dns]::GetHostEntry('').HostName` |
 | 5 most recent OS update titles | Windows Update Agent COM API (`Microsoft.Update.Session`) |
 | OS update KB numbers | Parsed from WUA title |
 | OS update install dates | WUA `QueryHistory` |
@@ -211,9 +220,8 @@ The Windows Update Agent COM query runs inside a background job with a **90-seco
 
 ```
 === Arc Patch Level Diagnostic ===
-Machine Name      : SERVER01
-Domain            : contoso.com
-IP Address(es)    : 10.0.1.42, 10.0.1.43
+Script Version    : 1.1.0
+FQDN              : server01.contoso.com
 
 --- 5 Most Recent OS Updates (WUA) ---
 KB            Date         Result     Title
@@ -237,6 +245,77 @@ KB5052000     2026-02-11   Success    2026-02 Cumulative Update for Microsoft se
 **Locally for testing (runs against the current machine):**
 ```powershell
 .\ArcPatchLevel.ps1
+```
+
+---
+
+## Get-ArcRunCommandOutput.ps1
+
+### Purpose
+
+A standalone read-only script that queries the current output of an existing named Run Command resource from every **Connected** Arc machine in a resource group and compiles the results into a single Markdown file.
+
+This is intended as a lightweight companion to `ArcScriptHarness.ps1` — use it to pull results from a previous harness run without resubmitting the diagnostic script.
+
+### Parameters
+
+| Parameter | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `ResourceGroupName` | `string` | ✅ | — | Resource group containing the Arc machines |
+| `RunCommandName` | `string` | ✅ | — | Name of the Run Command ARM resource to query on each machine (e.g. `ArcDiag-ArcPatchLevel`) |
+| `OutputPath` | `string` | | `ArcRunCommandOutput_<timestamp>.md` next to the script | Path for the output Markdown file. If a directory is supplied, the default timestamped filename is generated inside that directory |
+
+### Prerequisites
+
+- PowerShell 5.1 or later
+- `Az.ConnectedMachine` module installed
+- Active Azure context (`Connect-AzAccount` already run)
+
+### Behaviour
+
+- Only targets machines with `Status -eq 'Connected'`; offline machines are silently skipped
+- If a machine does not have the named Run Command resource, the report shows `*Error: ...*` for that machine instead of halting
+- Output is sequential (no parallel calls) — safe for small to medium resource groups
+
+### Per-Machine Report Format
+
+Each machine section in the generated Markdown report contains:
+
+```
+## MACHINENAME
+
+End Time: 2026-07-01 12:28:47
+Execution Time: 42s
+Exit Code: 0
+
+```
+<InstanceViewOutput content>
+```
+```
+
+### Usage Examples
+
+**Query all connected machines in a resource group:**
+```powershell
+.\Get-ArcRunCommandOutput.ps1 `
+    -ResourceGroupName 'MyRG' `
+    -RunCommandName    'ArcDiag-ArcPatchLevel'
+```
+
+**Write output to a specific directory:**
+```powershell
+.\Get-ArcRunCommandOutput.ps1 `
+    -ResourceGroupName 'MyRG' `
+    -RunCommandName    'ArcDiag-ArcPatchLevel' `
+    -OutputPath        'C:\Temp\Diags\'
+```
+
+**Write output to a specific file:**
+```powershell
+.\Get-ArcRunCommandOutput.ps1 `
+    -ResourceGroupName 'MyRG' `
+    -RunCommandName    'ArcDiag-ArcPatchLevel' `
+    -OutputPath        'C:\Reports\output.md'
 ```
 
 ---

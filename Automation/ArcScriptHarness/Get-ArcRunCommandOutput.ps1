@@ -2,10 +2,12 @@
 <#
 .SYNOPSIS
     Collects InstanceViewOutput from a named Run Command across all Connected Arc
-    machines in a resource group and writes the results to a Markdown file.
+    machines in one or more resource groups and writes the combined results to a
+    Markdown file.
 
-.PARAMETER ResourceGroupName
-    The resource group containing the Arc machines.
+.PARAMETER ResourceGroupNames
+    One or more resource group names to query. Results from all groups are combined
+    into a single report.
 
 .PARAMETER RunCommandName
     The name of the Run Command ARM resource to query on each machine.
@@ -15,18 +17,21 @@
     Defaults to ArcRunCommandOutput_<timestamp>.md in the script's directory.
 
 .NOTES
-    Version: 1.1.0
+    Version: 1.2.0
     Assumes an active Az context (Connect-AzAccount already run).
 
 .EXAMPLE
-    .\Get-ArcRunCommandOutput.ps1 -ResourceGroupName 'MyRG' -RunCommandName 'ArcDiag-ArcPatchLevel'
+    .\Get-ArcRunCommandOutput.ps1 -ResourceGroupNames 'MyRG' -RunCommandName 'ArcDiag-ArcPatchLevel'
 
 .EXAMPLE
-    .\Get-ArcRunCommandOutput.ps1 -ResourceGroupName 'MyRG' -RunCommandName 'ArcDiag-ArcPatchLevel' -OutputPath 'C:\Reports\output.md'
+    .\Get-ArcRunCommandOutput.ps1 -ResourceGroupNames 'RG1','RG2' -RunCommandName 'ArcDiag-ArcPatchLevel'
+
+.EXAMPLE
+    .\Get-ArcRunCommandOutput.ps1 -ResourceGroupNames 'RG1','RG2' -RunCommandName 'ArcDiag-ArcPatchLevel' -OutputPath 'C:\Reports\output.md'
 #>
 param (
     [Parameter(Mandatory)]
-    [string] $ResourceGroupName,
+    [string[]] $ResourceGroupNames,
 
     [Parameter(Mandatory)]
     [string] $RunCommandName,
@@ -42,22 +47,27 @@ if (Test-Path $OutputPath -PathType Container) {
 
 $mdFence = '```'
 
-# Discover Connected machines
-Write-Host "Querying Connected Arc machines in '$ResourceGroupName'..."
-$machines = @(
-    Get-AzConnectedMachine -ResourceGroupName $ResourceGroupName -ErrorAction Stop |
-        Where-Object { $_.Status -eq 'Connected' }
-)
-Write-Host "$($machines.Count) Connected machine(s) found."
+# Discover Connected machines across all resource groups
+$machines = [System.Collections.Generic.List[object]]::new()
+foreach ($rg in $ResourceGroupNames) {
+    Write-Host "Querying Connected Arc machines in '$rg'..."
+    $rgMachines = @(
+        Get-AzConnectedMachine -ResourceGroupName $rg -ErrorAction Stop |
+            Where-Object { $_.Status -eq 'Connected' }
+    )
+    Write-Host "  $($rgMachines.Count) Connected machine(s) found."
+    foreach ($m in $rgMachines) { $machines.Add($m) }
+}
+Write-Host "$($machines.Count) total Connected machine(s) across $($ResourceGroupNames.Count) resource group(s)."
 
 # Collect results
 $results = [System.Collections.Generic.List[pscustomobject]]::new()
 
 foreach ($machine in $machines) {
-    Write-Host "  Fetching: $($machine.Name)..."
+    Write-Host "  Fetching: $($machine.Name) ($($machine.ResourceGroupName))..."
     try {
         $cmd = Get-AzConnectedMachineRunCommand `
-            -ResourceGroupName $ResourceGroupName `
+            -ResourceGroupName $machine.ResourceGroupName `
             -MachineName       $machine.Name `
             -RunCommandName    $RunCommandName `
             -ErrorAction       Stop
@@ -69,22 +79,24 @@ foreach ($machine in $machines) {
                            [Math]::Round(($cmd.InstanceViewEndTime - $cmd.InstanceViewStartTime).TotalSeconds)
                        } else { '-' }
         $results.Add([pscustomobject]@{
-            MachineName  = $machine.Name
-            Output       = $output
-            EndTime      = $endTime
-            DurationSec  = $durationSec
-            ExitCode     = $exitCode
-            Error        = $null
+            MachineName   = $machine.Name
+            ResourceGroup = $machine.ResourceGroupName
+            Output        = $output
+            EndTime       = $endTime
+            DurationSec   = $durationSec
+            ExitCode      = $exitCode
+            Error         = $null
         })
     }
     catch {
         $results.Add([pscustomobject]@{
-            MachineName  = $machine.Name
-            Output       = $null
-            EndTime      = '-'
-            DurationSec  = '-'
-            ExitCode     = '-'
-            Error        = $_.Exception.Message
+            MachineName   = $machine.Name
+            ResourceGroup = $machine.ResourceGroupName
+            Output        = $null
+            EndTime       = '-'
+            DurationSec   = '-'
+            ExitCode      = '-'
+            Error         = $_.Exception.Message
         })
     }
 }
@@ -95,7 +107,7 @@ $lines.Add('# Arc Run Command Output')
 $lines.Add('')
 $lines.Add("| Field | Value |")
 $lines.Add("|---|---|")
-$lines.Add("| **Resource Group** | $ResourceGroupName |")
+$lines.Add("| **Resource Group(s)** | $($ResourceGroupNames -join ', ') |")
 $lines.Add("| **Run Command Name** | ``$RunCommandName`` |")
 $lines.Add("| **Generated** | $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') |")
 $lines.Add("| **Machines** | $($results.Count) |")
@@ -104,6 +116,7 @@ $lines.Add('')
 foreach ($r in $results) {
     $lines.Add("## $($r.MachineName)")
     $lines.Add('')
+    $lines.Add("Resource Group: $($r.ResourceGroup)   ")
     $lines.Add("End Time: $($r.EndTime)   ")
     $lines.Add("Execution Time: $($r.DurationSec)s   ")
     $lines.Add("Exit Code: $($r.ExitCode)")
