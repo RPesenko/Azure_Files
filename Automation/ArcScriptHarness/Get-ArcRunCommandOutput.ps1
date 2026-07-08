@@ -16,8 +16,13 @@
     Path to write the Markdown report.
     Defaults to ArcRunCommandOutput_<timestamp>.md in the script's directory.
 
+.PARAMETER ExcludeDomains
+    One or more domain suffixes to exclude. Any machine whose FQDN ends with one
+    of the supplied values (case-insensitive) is skipped entirely.
+    Example values: 'contoso.com', 'us.contoso.com'
+
 .NOTES
-    Version: 1.2.0
+    Version: 1.3.0
     Assumes an active Az context (Connect-AzAccount already run).
 
 .EXAMPLE
@@ -28,6 +33,9 @@
 
 .EXAMPLE
     .\Get-ArcRunCommandOutput.ps1 -ResourceGroupNames 'RG1','RG2' -RunCommandName 'ArcDiag-ArcPatchLevel' -OutputPath 'C:\Reports\output.md'
+
+.EXAMPLE
+    .\Get-ArcRunCommandOutput.ps1 -ResourceGroupNames 'RG1','RG2' -RunCommandName 'ArcDiag-ArcPatchLevel' -ExcludeDomains 'contoso.com','extranet.contoso.com'
 #>
 param (
     [Parameter(Mandatory)]
@@ -37,7 +45,10 @@ param (
     [string] $RunCommandName,
 
     [Parameter()]
-    [string] $OutputPath = (Join-Path $PSScriptRoot ("ArcRunCommandOutput_{0}.md" -f (Get-Date -Format 'yyyyMMddHHmmss')))
+    [string] $OutputPath = (Join-Path $PSScriptRoot ("ArcRunCommandOutput_{0}.md" -f (Get-Date -Format 'yyyyMMddHHmmss'))),
+
+    [Parameter()]
+    [string[]] $ExcludeDomains = @()
 )
 
 # If OutputPath is a directory, append the default timestamped filename
@@ -59,6 +70,27 @@ foreach ($rg in $ResourceGroupNames) {
     foreach ($m in $rgMachines) { $machines.Add($m) }
 }
 Write-Host "$($machines.Count) total Connected machine(s) across $($ResourceGroupNames.Count) resource group(s)."
+
+# Filter machines by domain suffix if requested
+if ($ExcludeDomains.Count -gt 0) {
+    $before = $machines.Count
+    $machines = [System.Collections.Generic.List[object]]($machines | Where-Object {
+        $fqdn = $_.DnsFqdn
+        if ([string]::IsNullOrWhiteSpace($fqdn)) {
+            return $true   # no FQDN available – cannot determine domain, keep machine
+        }
+        $excluded = $false
+        foreach ($domain in $ExcludeDomains) {
+            if ($fqdn -ilike "*.$domain" -or $fqdn -ieq $domain) {
+                $excluded = $true
+                break
+            }
+        }
+        -not $excluded
+    })
+    $skipped = $before - $machines.Count
+    Write-Host "Domain filter applied (excluded: $($ExcludeDomains -join ', ')): $skipped machine(s) skipped, $($machines.Count) remaining."
+}
 
 # Collect results
 $results = [System.Collections.Generic.List[pscustomobject]]::new()
@@ -111,6 +143,9 @@ $lines.Add("| **Resource Group(s)** | $($ResourceGroupNames -join ', ') |")
 $lines.Add("| **Run Command Name** | ``$RunCommandName`` |")
 $lines.Add("| **Generated** | $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') |")
 $lines.Add("| **Machines** | $($results.Count) |")
+if ($ExcludeDomains.Count -gt 0) {
+    $lines.Add("| **Excluded Domains** | $($ExcludeDomains -join ', ') |")
+}
 $lines.Add('')
 
 foreach ($r in $results) {
