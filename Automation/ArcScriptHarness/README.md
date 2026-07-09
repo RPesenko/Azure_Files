@@ -12,6 +12,7 @@ For a lighter-weight, fire-and-forget alternative, see [`ArcCommand.ps1`](../REA
 |---|---|
 | [`ArcScriptHarness.ps1`](#arcscriptharnessps1) | The harness — handles targeting, parallel submission, polling, retry, and reporting |
 | [`ArcPatchLevel.ps1`](#arcpatchlevelps1) | Sample diagnostic script — collects machine FQDN and the 5 most recent OS patches |
+| [`ArcPatchState.ps1`](#arcpatchstateps1) | Sample diagnostic script — lists all installed Security Updates, Servicing Stack Updates, and OS Updates via DISM |
 | [`ArcMachineHealth.ps1`](#arcmachinehealthps1) | Sample diagnostic script — comprehensive health snapshot: system info, .NET, CPU, memory, disk, network, and recent events |
 | [`Get-ArcRunCommandOutput.ps1`](#get-arcruncommandoutputps1) | Retrieves existing Run Command output from all connected Arc machines in a resource group and writes a Markdown report |
 
@@ -245,6 +246,64 @@ KB5052000     2026-02-11   Success    2026-02 Cumulative Update for Microsoft se
 **Locally for testing (runs against the current machine):**
 ```powershell
 .\ArcPatchLevel.ps1
+```
+
+---
+
+## ArcPatchState.ps1
+
+### Purpose
+
+A ready-to-use diagnostic script for `ArcScriptHarness.ps1` that queries the local DISM package store (`dism /online /get-packages`) and reports all installed patches that fall into one of three categories:
+
+| Category | Filter logic |
+|---|---|
+| **Security Update** | DISM `Release Type` = `Security Update` |
+| **Servicing Stack Update** | DISM `Release Type` = `Update` AND Package Identity contains `ServicingStack` |
+| **OS Update** | DISM `Release Type` = `Update` AND Package Identity does **not** contain `ServicingStack` (covers Cumulative/LCU patches) |
+
+Results are sorted by install date descending in a single flat table. No record-count limit is applied — all matching installed packages are returned.
+
+### DISM Background Job
+
+The DISM command is run inside a background job with a **120-second timeout** to prevent the script from stalling on machines with a large package store or a locked CBS database. If the job does not complete within the timeout, the machine is reported with a timeout message and no package data.
+
+### Requirements
+
+- PowerShell 5.1 or later (executes on the Arc agent)
+- DISM requires elevation — satisfied automatically when run via Arc Run Command (agent runs as SYSTEM)
+- No external modules required
+
+### Sample Output
+
+```
+=== Arc Patch State Diagnostic ===
+Script Version    : 1.0.0
+FQDN              : server01.contoso.com
+Data Source       : DISM
+
+KB            Install Date Package Identity
+------------  ------------ ------------------------------------------------------------
+KB5063060     2026-06-11   Package_for_RU_KB5063060~31bf3856ad364e35~amd64~~10.0.20348.1
+KB5058385     2026-05-14   Package_for_RU_KB5058385~31bf3856ad364e35~amd64~~10.0.20348.1
+KB5034439     2026-02-11   Microsoft-Windows-ServicingStack-Package~31bf3856ad364e35~amd64~~10.0.20348.1
+KB5028948     2024-07-09   Package_for_KB5028948~31bf3856ad364e35~amd64~~10.0.20348.1
+
+Total matching packages: 4
+```
+
+### Usage
+
+**Via the harness (recommended):**
+```powershell
+.\ArcScriptHarness.ps1 `
+    -DiagnosticScriptPath .\ArcPatchState.ps1 `
+    -SubscriptionId       'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx'
+```
+
+**Locally for testing (requires an elevated session):**
+```powershell
+.\ArcPatchState.ps1
 ```
 
 ---
