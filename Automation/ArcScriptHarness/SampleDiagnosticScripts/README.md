@@ -1,4 +1,4 @@
-# Sample Diagnostic Scripts
+# SampleDiagnosticScripts
 
 Ready-to-use diagnostic scripts for [`ArcScriptHarness.ps1`](../README.md). Each script is designed to run on Arc-enabled Windows servers via the Run Command API and produces structured plain-text output that the harness captures in its Markdown report.
 
@@ -75,7 +75,7 @@ KB5052000     2026-02-11   Success    2026-02 Cumulative Update for Microsoft se
 **Via the harness (recommended):**
 ```powershell
 .\ArcScriptHarness.ps1 `
-    -DiagnosticScriptPath .\Sample Diagnostic Scripts\ArcPatchLevel.ps1 `
+  -DiagnosticScriptPath .\SampleDiagnosticScripts\ArcPatchLevel.ps1 `
     -SubscriptionId       'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx'
 ```
 
@@ -133,7 +133,7 @@ Total matching packages: 4
 **Via the harness (recommended):**
 ```powershell
 .\ArcScriptHarness.ps1 `
-    -DiagnosticScriptPath .\Sample Diagnostic Scripts\ArcPatchState.ps1 `
+  -DiagnosticScriptPath .\SampleDiagnosticScripts\ArcPatchState.ps1 `
     -SubscriptionId       'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx'
 ```
 
@@ -239,14 +239,14 @@ TimeCreated          Level     EventId  Source                        Message
 **Via the harness (recommended):**
 ```powershell
 .\ArcScriptHarness.ps1 `
-    -DiagnosticScriptPath .\Sample Diagnostic Scripts\ArcMachineHealth.ps1 `
+  -DiagnosticScriptPath .\SampleDiagnosticScripts\ArcMachineHealth.ps1 `
     -SubscriptionId       'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx'
 ```
 
 **Target a specific machine:**
 ```powershell
 .\ArcScriptHarness.ps1 `
-    -DiagnosticScriptPath .\Sample Diagnostic Scripts\ArcMachineHealth.ps1 `
+  -DiagnosticScriptPath .\SampleDiagnosticScripts\ArcMachineHealth.ps1 `
     -SubscriptionId       'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx' `
     -MachineName          'SERVER01'
 ```

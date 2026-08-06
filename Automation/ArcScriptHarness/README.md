@@ -12,7 +12,7 @@ For a lighter-weight, fire-and-forget alternative, see [`ArcCommand.ps1`](../REA
 |---|---|
 | [`ArcScriptHarness.ps1`](#arcscriptharnessps1) | The harness — handles targeting, parallel submission, polling, retry, and reporting |
 | [`Get-ArcRunCommandOutput.ps1`](#get-arcruncommandoutputps1) | Retrieves existing Run Command output from all connected Arc machines in a resource group and writes a Markdown report |
-| [`Sample Diagnostic Scripts/`](Sample%20Diagnostic%20Scripts/README.md) | Three sample diagnostic scripts: `ArcPatchLevel.ps1`, `ArcPatchState.ps1`, `ArcMachineHealth.ps1` — see subfolder README |
+| [`SampleDiagnosticScripts/`](SampleDiagnosticScripts/README.md) | Three sample diagnostic scripts: `ArcPatchLevel.ps1`, `ArcPatchState.ps1`, `ArcMachineHealth.ps1` — see subfolder README |
 
 ---
 
@@ -76,14 +76,14 @@ Executes a local PowerShell script against Azure Arc-enabled Windows servers wit
 **Basic — all connected Windows machines in a subscription:**
 ```powershell
 .\ArcScriptHarness.ps1 `
-    -DiagnosticScriptPath .\Sample Diagnostic Scripts\ArcPatchLevel.ps1 `
+    -DiagnosticScriptPath .\SampleDiagnosticScripts\ArcPatchLevel.ps1 `
     -SubscriptionId       'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx'
 ```
 
 **Filter to specific resource groups and save report with a specific name:**
 ```powershell
 .\ArcScriptHarness.ps1 `
-    -DiagnosticScriptPath  .\Sample Diagnostic Scripts\ArcPatchLevel.ps1 `
+    -DiagnosticScriptPath  .\SampleDiagnosticScripts\ArcPatchLevel.ps1 `
     -SubscriptionId        'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx' `
     -ResourceGroupNames    'RG-Prod-East', 'RG-Prod-West' `
     -OutputPath            'C:\Reports\PatchLevel_Tues_pm.md'
@@ -92,7 +92,7 @@ Executes a local PowerShell script against Azure Arc-enabled Windows servers wit
 **Write report to a directory (default filename auto-generated):**
 ```powershell
 .\ArcScriptHarness.ps1 `
-    -DiagnosticScriptPath .\Sample Diagnostic Scripts\ArcPatchLevel.ps1 `
+    -DiagnosticScriptPath .\SampleDiagnosticScripts\ArcPatchLevel.ps1 `
     -SubscriptionId       'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx' `
     -OutputPath           'C:\Temp\Diags\'
 ```
@@ -100,7 +100,7 @@ Executes a local PowerShell script against Azure Arc-enabled Windows servers wit
 **Filter by tags:**
 ```powershell
 .\ArcScriptHarness.ps1 `
-    -DiagnosticScriptPath .\Sample Diagnostic Scripts\ArcPatchLevel.ps1 `
+    -DiagnosticScriptPath .\SampleDiagnosticScripts\ArcPatchLevel.ps1 `
     -SubscriptionId       'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx' `
     -FilterTags           @{ Environment = 'Production'; Team = 'Ops' }
 ```
@@ -108,7 +108,7 @@ Executes a local PowerShell script against Azure Arc-enabled Windows servers wit
 **Large estate — increase batch size, adjust timeout:**
 ```powershell
 .\ArcScriptHarness.ps1 `
-    -DiagnosticScriptPath  .\Sample Diagnostic Scripts\ArcPatchLevel.ps1 `
+    -DiagnosticScriptPath  .\SampleDiagnosticScripts\ArcPatchLevel.ps1 `
     -SubscriptionId        'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx' `
     -BatchSize             25 `
     -BatchDelaySeconds     5 `
@@ -119,7 +119,7 @@ Executes a local PowerShell script against Azure Arc-enabled Windows servers wit
 **Target specific machines by FQDN (e.g. re-run against machines that failed or timed out):**
 ```powershell
 .\ArcScriptHarness.ps1 `
-    -DiagnosticScriptPath .\Sample Diagnostic Scripts\ArcPatchLevel.ps1 `
+    -DiagnosticScriptPath .\SampleDiagnosticScripts\ArcPatchLevel.ps1 `
     -SubscriptionId       'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx' `
     -FilterFQDNs          'server01.contoso.com', 'server02.contoso.com'
 ```
@@ -127,7 +127,7 @@ Executes a local PowerShell script against Azure Arc-enabled Windows servers wit
 **Target a single machine by name:**
 ```powershell
 .\ArcScriptHarness.ps1 `
-    -DiagnosticScriptPath .\Sample Diagnostic Scripts\ArcMachineHealth.ps1 `
+    -DiagnosticScriptPath .\SampleDiagnosticScripts\ArcMachineHealth.ps1 `
     -SubscriptionId       'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx' `
     -MachineName          'SERVER01'
 ```
@@ -135,7 +135,7 @@ Executes a local PowerShell script against Azure Arc-enabled Windows servers wit
 **Target multiple machines — short names and FQDNs can be mixed:**
 ```powershell
 .\ArcScriptHarness.ps1 `
-    -DiagnosticScriptPath .\Sample Diagnostic Scripts\ArcMachineHealth.ps1 `
+    -DiagnosticScriptPath .\SampleDiagnosticScripts\ArcMachineHealth.ps1 `
     -SubscriptionId       'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx' `
     -MachineName          'SERVER01', 'server02.contoso.com', 'SERVER03'
 ```
@@ -143,7 +143,7 @@ Executes a local PowerShell script against Azure Arc-enabled Windows servers wit
 **Force cleanup of Run Command ARM resources after collection:**
 ```powershell
 .\ArcScriptHarness.ps1 `
-    -DiagnosticScriptPath .\Sample Diagnostic Scripts\ArcPatchLevel.ps1 `
+    -DiagnosticScriptPath .\SampleDiagnosticScripts\ArcPatchLevel.ps1 `
     -SubscriptionId       'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx' `
     -Cleanup
 ```
