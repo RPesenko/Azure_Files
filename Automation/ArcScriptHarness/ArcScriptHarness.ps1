@@ -50,12 +50,10 @@
     Example: @{ Environment = 'Prod'; Team = 'Ops' }
 
 .PARAMETER FilterFQDNs
-    Optional. An array of fully qualified domain names (FQDNs). When specified, only
-    machines whose FQDN matches an entry in this list (case-insensitive) are targeted.
-    Useful for re-running the harness against a specific subset of machines — for example,
-    machines that were unresponsive or returned errors in a previous pass — without
-    reprocessing all machines that already succeeded.
-    Example: 'server01.contoso.com','server02.contoso.com'
+    Optional. A regular expression matched case-insensitively against each machine's fully
+    qualified domain name (FQDN). Only matching machines are targeted. Use ^ and $ to match
+    the complete FQDN. Invalid regular expressions are rejected during parameter binding.
+    Example: '^server0[1-5]\.contoso\.com$'
 
 .PARAMETER MachineName
     Optional. One or more machine names to target. Each entry is matched case-insensitively
@@ -106,11 +104,11 @@
         -Cleanup
 
 .EXAMPLE
-    # Re-run against only the machines that failed or timed out in a previous pass
+    # Target server01 through server05 in the contoso.com domain
     .\ArcScriptHarness.ps1 `
         -DiagnosticScriptPath .\Get-DiskHealth.ps1 `
         -SubscriptionId       'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx' `
-        -FilterFQDNs          'server01.contoso.com','server02.contoso.com'
+        -FilterFQDNs          '^server0[1-5]\.contoso\.com$'
 
 .EXAMPLE
     # Target a single machine by name
@@ -134,8 +132,9 @@
         -DiagnosticScriptParameters @{ MostRecentCount = 20 }
 
 .NOTES
-    Version: 1.4.0: Added -DiagnosticScriptParameters support; harness now lifts param()
-    blocks to the wrapper top-level so diagnostic scripts with parameters work correctly.
+    Version: 1.5.0: Changed -FilterFQDNs to accept a case-insensitive regular expression.
+    Version: 1.4.0: Added -DiagnosticScriptParameters support; harness lifts param() blocks
+    to the wrapper top-level so diagnostic scripts with parameters work correctly.
     The Run Command ARM resource is created on first use and reused on subsequent runs:
       Create - no existing resource found; created fresh.
       ReRun  - resource exists and script hash matches; re-executed unchanged.
@@ -191,7 +190,7 @@ param (
     [hashtable] $FilterTags,
 
     [Parameter()]
-    [string[]] $FilterFQDNs,
+    [regex] $FilterFQDNs,
 
     [Parameter()]
     [string[]] $MachineName,
@@ -217,7 +216,7 @@ param (
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
-$script:Version        = '1.4.0'
+$script:Version        = '1.5.0'
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Helpers
@@ -471,16 +470,20 @@ if ($FilterTags -and $FilterTags.Count -gt 0) {
     Write-Status "Tag filter         : $tagDesc"
 }
 
-# FQDN filter — only include machines whose FQDN is in the supplied list
-if ($FilterFQDNs -and $FilterFQDNs.Count -gt 0) {
-    $fqdnLower  = $FilterFQDNs | ForEach-Object { $_.ToLower() }
-    foreach ($m in @($candidates | Where-Object { (Get-MachineFQDN -Machine $_).ToLower() -notin $fqdnLower })) {
-        $filteredOutMachines.Add([pscustomobject]@{ Machine = $m; Reason = "FQDN '$(Get-MachineFQDN -Machine $m)' not in FQDN filter" })
+# FQDN filter — only include machines whose FQDN matches the supplied regex
+if ($null -ne $FilterFQDNs) {
+    $fqdnRegex = [regex]::new(
+        $FilterFQDNs.ToString(),
+        [System.Text.RegularExpressions.RegexOptions]::IgnoreCase -bor
+        [System.Text.RegularExpressions.RegexOptions]::CultureInvariant
+    )
+    foreach ($m in @($candidates | Where-Object { -not $fqdnRegex.IsMatch((Get-MachineFQDN -Machine $_)) })) {
+        $filteredOutMachines.Add([pscustomobject]@{ Machine = $m; Reason = "FQDN '$(Get-MachineFQDN -Machine $m)' does not match regex '$FilterFQDNs'" })
     }
     $candidates = $candidates | Where-Object {
-        (Get-MachineFQDN -Machine $_).ToLower() -in $fqdnLower
+        $fqdnRegex.IsMatch((Get-MachineFQDN -Machine $_))
     }
-    Write-Status "FQDN filter        : $($FilterFQDNs -join ', ')"
+    Write-Status "FQDN regex filter  : $FilterFQDNs"
 }
 
 # Machine name filter — matches by short name OR FQDN (case-insensitive)
@@ -938,8 +941,9 @@ if ($FilterTags -and $FilterTags.Count -gt 0) {
     $tagStr = ($FilterTags.GetEnumerator() | ForEach-Object { "$($_.Key)=$($_.Value)" }) -join ', '
     $reportLines.Add("| **Tag Filter** | $tagStr |")
 }
-if ($FilterFQDNs -and $FilterFQDNs.Count -gt 0) {
-    $reportLines.Add("| **FQDN Filter** | $($FilterFQDNs -join ', ') |")
+if ($null -ne $FilterFQDNs) {
+    $escapedFQDNRegex = $FilterFQDNs.ToString().Replace('|', '\|')
+    $reportLines.Add("| **FQDN Regex Filter** | ``$escapedFQDNRegex`` |")
 }
 if ($MachineName -and $MachineName.Count -gt 0) {
     $reportLines.Add("| **Machine Filter** | $($MachineName -join ', ') |")

@@ -52,7 +52,7 @@ Executes a local PowerShell script against Azure Arc-enabled Windows servers wit
 | `OutputPath` | `string` | | `.\ArcDiagResults_<timestamp>.md` in the current directory | Path to write the Markdown results report. If a directory path is supplied, the default timestamped filename is generated inside that directory |
 | `ResourceGroupNames` | `string[]` | | *(all RGs)* | One or more resource group names to restrict targets. If omitted, all connected Windows Arc machines in the subscription are targeted |
 | `FilterTags` | `hashtable` | | *(none)* | Tag key/value pairs that machines must **all** carry to be targeted (AND logic). Example: `@{ Environment = 'Prod'; Team = 'Ops' }` |
-| `FilterFQDNs` | `string[]` | | *(none)* | Explicit list of FQDNs to target (case-insensitive). Machines not in the list are excluded. Useful for re-running against machines that failed or timed out in a previous pass without re-processing machines that already succeeded. Example: `'server01.contoso.com','server02.contoso.com'` |
+| `FilterFQDNs` | `regex` | | *(none)* | Regular expression matched case-insensitively against each machine's FQDN. Only matching machines are targeted. Use `^` and `$` to match the complete FQDN. Example: `'^server0[1-5]\.contoso\.com$'` |
 | `MachineName` | `string[]` | | *(none)* | One or more machine names to target. Each entry is matched against the machine's short name (e.g. `SERVER01`) **and** its FQDN — either form works in the same list. Applied in addition to any other active filters. Example: `'SERVER01','server02.contoso.com'` |
 | `BatchSize` | `int` | | `10` | Machines per batch. Also controls the `ThrottleLimit` for concurrent ARM writes within each batch. Range: 1–50 |
 | `BatchDelaySeconds` | `int` | | `2` | Seconds to pause between batches to stay within ARM write rate limits. Range: 0–60 |
@@ -116,12 +116,20 @@ Executes a local PowerShell script against Azure Arc-enabled Windows servers wit
     -OutputPath            'C:\Reports\Results.md'
 ```
 
-**Target specific machines by FQDN (e.g. re-run against machines that failed or timed out):**
+**Target server01 through server05 in a specific domain using an FQDN regular expression:**
 ```powershell
 .\ArcScriptHarness.ps1 `
     -DiagnosticScriptPath .\SampleDiagnosticScripts\ArcPatchLevel.ps1 `
     -SubscriptionId       'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx' `
-    -FilterFQDNs          'server01.contoso.com', 'server02.contoso.com'
+    -FilterFQDNs          '^server0[1-5]\.contoso\.com$'
+```
+
+**Target production web servers across numbered hosts:**
+```powershell
+.\ArcScriptHarness.ps1 `
+    -DiagnosticScriptPath .\SampleDiagnosticScripts\ArcMachineHealth.ps1 `
+    -SubscriptionId       'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx' `
+    -FilterFQDNs          '^web-prod-\d+\.contoso\.com$'
 ```
 
 **Target a single machine by name:**
